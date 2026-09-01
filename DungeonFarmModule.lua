@@ -20,6 +20,7 @@ end
 
 - Safely fires the start UI button without mouse cursor movement
 function DungeonFarmModule:ClickStartButton()
+	print("clicking")
 	local pgui = self.Player:FindFirstChild("PlayerGui")
 	if not pgui then return end
 
