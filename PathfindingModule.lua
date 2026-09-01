@@ -23,7 +23,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.STOP_SPEED = 1.5
 	self.HOVER_HEIGHT = 9
 	self.ENGAGE_DISTANCE = 15
-	self.POST_MODE = true -- When true, locks to a fixed position above the target when first reached
+	self.POST_MODE = true
 
 	-- Active Target & Lock Tracking
 	self.CurrentEnemy = nil :: BasePart?
@@ -41,10 +41,6 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.MoveConnection = nil :: RBXScriptConnection?
 
 	return self
-end
-
-function PathfindingModule:DPrint(...)
-	if self.DEBUG then print("[PathfindingModule]", ...) end
 end
 
 -- Physics Helpers
@@ -106,7 +102,6 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then return nil end
 
-	-- Validate if current enemy is still alive and in world
 	if self.CurrentEnemy and self.CurrentEnemy.Parent then
 		local parentModel = self.CurrentEnemy.Parent
 		local hum = parentModel:FindFirstChildOfClass("Humanoid")
@@ -115,7 +110,6 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 		end
 	end
 
-	-- Target died/missing: Reset post lock
 	self.CurrentEnemy = nil
 	self.LockPosition = nil
 
@@ -194,6 +188,12 @@ function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3):
 	return directDelta.Magnitude > 0.1 and directDelta.Unit or Vector3.zero
 end
 
+-- Rotates character downwards facing target
+local function faceTargetDownward(root: BasePart, targetPos: Vector3)
+	local lookDirection = (targetPos - root.Position).Unit
+	root.CFrame = CFrame.lookAt(root.Position, root.Position + lookDirection)
+end
+
 -- Execution Loop
 function PathfindingModule:StartHoverTargeting()
 	self:StopPathfinding()
@@ -215,8 +215,9 @@ function PathfindingModule:StartHoverTargeting()
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			local flatDistance = flatDelta.Magnitude
 
-			-- If Post Mode is enabled and position is locked, stay at locked post
+			-- If Post Mode is enabled and position is locked, stay at locked post and face down
 			if self.POST_MODE and self.LockPosition then
+				faceTargetDownward(root, enemyPos)
 				local offsetDelta = self.LockPosition - currentPos
 				if offsetDelta.Magnitude > 0.5 then
 					local wishDir = offsetDelta.Unit
@@ -233,12 +234,13 @@ function PathfindingModule:StartHoverTargeting()
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- Within Engagement Range
+				-- Within Hover Range: Face character straight down at enemy target
+				faceTargetDownward(root, enemyPos)
+
 				self.MoveState.waypoints = nil
 				local hoverPos = enemyPos + Vector3.new(0, self.HOVER_HEIGHT, 0)
 
 				if self.POST_MODE then
-					-- Set fixed post coordinate
 					self.LockPosition = hoverPos
 				end
 
@@ -252,7 +254,6 @@ function PathfindingModule:StartHoverTargeting()
 				end
 			end
 		else
-			-- No enemies active: Clear state
 			self.CurrentEnemy = nil
 			self.LockPosition = nil
 			self.MoveState.waypoints = nil
