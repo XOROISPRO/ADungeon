@@ -4,26 +4,25 @@ DungeonFarmModule.__index = DungeonFarmModule
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-function DungeonFarmModule.Init(State: any, Toggles: any, PathfindingModule: any, AbilityModule: any)
+function DungeonFarmModule.Init(State: any, Toggles: any, PathfindingModule: any, AbilityModule: any, AutoClickerModule: any)
 	local self = setmetatable({}, DungeonFarmModule)
 
 	self.State = State
 	self.Toggles = Toggles
 	self.PathfindingModule = PathfindingModule
 	self.AbilityModule = AbilityModule
+	self.AutoClickerModule = AutoClickerModule
 	self.Running = false
 
 	return self
 end
 
--- Fires the start remote directly to initiate the dungeon
 function DungeonFarmModule:TriggerStartRemote()
 	local remotes = ReplicatedStorage:FindFirstChild("remotes")
 	if remotes then
 		local changeStartValue = remotes:FindFirstChild("changeStartValue") :: RemoteEvent?
 		if changeStartValue and changeStartValue:IsA("RemoteEvent") then
 			changeStartValue:FireServer()
-			print("[DungeonFarmModule] Fired changeStartValue RemoteEvent.")
 		end
 	end
 end
@@ -33,7 +32,6 @@ function DungeonFarmModule:Start()
 	self.Running = true
 	self.State.AutoFarmActive = true
 
-	-- Fire the dungeon start remote event directly
 	self:TriggerStartRemote()
 
 	if self.PathfindingModule then
@@ -42,6 +40,10 @@ function DungeonFarmModule:Start()
 
 	if self.AbilityModule then
 		self.AbilityModule:Start()
+	end
+
+	if self.AutoClickerModule then
+		self.AutoClickerModule:Start()
 	end
 end
 
@@ -55,6 +57,10 @@ function DungeonFarmModule:Stop()
 
 	if self.AbilityModule then
 		self.AbilityModule:Stop()
+	end
+
+	if self.AutoClickerModule then
+		self.AutoClickerModule:Stop()
 	end
 end
 
