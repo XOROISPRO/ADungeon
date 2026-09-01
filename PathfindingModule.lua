@@ -17,9 +17,9 @@ function PathfindingModule.Init(State: any, Toggles: any)
 
 	-- Physics & Position Parameters
 	self.MAX_SPEED = 35
-	self.ACCEL = 15 -- Reduced base acceleration for smoother movement
-	self.AIR_ACCEL = 5 -- Air acceleration control
-	self.MAX_AIR_VELOCITY = 25 -- Caps air velocity to prevent anticheat triggers
+	self.ACCEL = 15
+	self.AIR_ACCEL = 5
+	self.MAX_AIR_VELOCITY = 25
 	self.FRICTION = 6
 	self.STOP_SPEED = 1.5
 	self.HOVER_HEIGHT = 9
@@ -77,7 +77,6 @@ function PathfindingModule:StepMovement(root: BasePart, character: Model, wishDi
 	self.MoveState.velocity = applyFriction(self.MoveState.velocity, isGrounded, self.FRICTION, self.STOP_SPEED, dt)
 	self.MoveState.velocity = accel(self.MoveState.velocity, wishDir, activeMaxSpeed, currentAccel, dt)
 	
-	-- Clamp final air velocity to avoid physics engine snaps
 	local clampedY = math.clamp(targetYVelocity, -self.MAX_AIR_VELOCITY, self.MAX_AIR_VELOCITY)
 	root.AssemblyLinearVelocity = Vector3.new(
 		self.MoveState.velocity.X, 
@@ -122,7 +121,7 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 	if self.CurrentEnemy and self.CurrentEnemy.Parent then
 		local parentModel = self.CurrentEnemy.Parent
 		local hum = parentModel:FindFirstChildOfClass("Humanoid")
-		if not hum or hum.Health > 0 then
+		if hum and hum.Health > 0 then
 			return self.CurrentEnemy
 		end
 	end
@@ -143,7 +142,7 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 				local enemyHum = enemy:FindFirstChildOfClass("Humanoid")
 				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart") :: BasePart?
 
-				if enemyRoot and (not enemyHum or enemyHum.Health > 0) then
+				if enemyRoot and enemyHum and enemyHum.Health > 0 then
 					local dist = (enemyRoot.Position - root.Position).Magnitude
 					if dist < shortestDistance then
 						shortestDistance = dist
@@ -205,7 +204,7 @@ function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3):
 	return directDelta.Magnitude > 0.1 and directDelta.Unit or Vector3.zero
 end
 
--- Rotates character downwards facing target
+-- Rotates character downward directly facing enemy
 local function faceTargetDownward(root: BasePart, targetPos: Vector3)
 	local lookDirection = (targetPos - root.Position).Unit
 	root.CFrame = CFrame.lookAt(root.Position, root.Position + lookDirection)
@@ -232,11 +231,14 @@ function PathfindingModule:StartHoverTargeting()
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			local flatDistance = flatDelta.Magnitude
 
+			-- Continuously keep downward facing towards enemy
+			faceTargetDownward(root, enemyPos)
+
+			-- Static Post Mode Behavior
 			if self.POST_MODE and self.LockPosition then
-				faceTargetDownward(root, enemyPos)
-				local offsetDelta = self.LockPosition - currentPos
-				if offsetDelta.Magnitude > 0.5 then
-					local wishDir = offsetDelta.Unit
+				local postDelta = self.LockPosition - currentPos
+				if postDelta.Magnitude > 0.5 then
+					local wishDir = postDelta.Unit
 					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
 				else
 					self.MoveState.velocity = Vector3.zero
@@ -246,9 +248,11 @@ function PathfindingModule:StartHoverTargeting()
 			end
 
 			if flatDistance > self.ENGAGE_DISTANCE then
+				-- Approach target ground position
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
+				-- Set hover post position (shifted offset back towards player)
 				local playerToEnemy = (enemyPos - currentPos)
 				local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
 
@@ -259,7 +263,6 @@ function PathfindingModule:StartHoverTargeting()
 				end
 
 				local hoverPos = targetHoverPoint + Vector3.new(0, self.HOVER_HEIGHT, 0)
-				faceTargetDownward(root, enemyPos)
 
 				self.MoveState.waypoints = nil
 
