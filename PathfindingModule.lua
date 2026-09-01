@@ -15,16 +15,21 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.Player = Players.LocalPlayer
 	self.DEBUG = true
 
-	-- Physics Parameters
+	-- Physics & Position Parameters
 	self.MAX_SPEED = 35
 	self.ACCEL = 25
 	self.AIR_ACCEL = 10
 	self.FRICTION = 6
 	self.STOP_SPEED = 1.5
 	self.HOVER_HEIGHT = 9
-	self.ENGAGE_DISTANCE = 15 -- Distance threshold to switch from ground pathing to hover
+	self.ENGAGE_DISTANCE = 15
+	self.POST_MODE = true -- When true, locks to a fixed position above the target when first reached
 
-	-- Movement & Waypoint State
+	-- Active Target & Lock Tracking
+	self.CurrentEnemy = nil :: BasePart?
+	self.LockPosition = nil :: Vector3?
+
+	-- Movement State Vector Tracker
 	self.MoveState = {
 		velocity = Vector3.new(),
 		waypoints = nil :: {PathWaypoint}?,
@@ -88,11 +93,31 @@ function PathfindingModule:SetWalkSpeed(speed: number)
 	self.MAX_SPEED = speed
 end
 
--- Nearest Dungeon Enemy Tracker
+function PathfindingModule:SetPostMode(enabled: boolean)
+	self.POST_MODE = enabled
+	if not enabled then
+		self.LockPosition = nil
+	end
+end
+
+-- Target Validation & Selection
 function PathfindingModule:GetClosestEnemy(): BasePart?
 	local char = self.Player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then return nil end
+
+	-- Validate if current enemy is still alive and in world
+	if self.CurrentEnemy and self.CurrentEnemy.Parent then
+		local parentModel = self.CurrentEnemy.Parent
+		local hum = parentModel:FindFirstChildOfClass("Humanoid")
+		if not hum or hum.Health > 0 then
+			return self.CurrentEnemy
+		end
+	end
+
+	-- Target died/missing: Reset post lock
+	self.CurrentEnemy = nil
+	self.LockPosition = nil
 
 	local dungeon = Workspace:FindFirstChild("dungeon")
 	if not dungeon then return nil end
@@ -118,15 +143,15 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 		end
 	end
 
+	self.CurrentEnemy = closestEnemyPart
 	return closestEnemyPart
 end
 
--- Waypoint direction resolver for ground phase
+-- Ground Pathfinding Helper
 function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3): Vector3
 	local state = self.MoveState
 	local currentTime = tick()
 
-	-- Recompute path periodically (every 0.5s) to stay updated
 	if not state.waypoints or (currentTime - state.lastComputeTime) > 0.5 then
 		state.lastComputeTime = currentTime
 		local path = PathfindingService:CreatePath({
@@ -147,13 +172,11 @@ function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3):
 		end
 	end
 
-	-- Follow path waypoints if available
 	if state.waypoints and state.waypointIndex <= #state.waypoints then
 		local currentWP = state.waypoints[state.waypointIndex]
 		local wpPos = currentWP.Position
 		local flatDelta = Vector3.new(wpPos.X - root.Position.X, 0, wpPos.Z - root.Position.Z)
 
-		-- Advance waypoint when close enough
 		if flatDelta.Magnitude < 3 then
 			state.waypointIndex += 1
 			if state.waypointIndex <= #state.waypoints then
@@ -167,12 +190,11 @@ function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3):
 		end
 	end
 
-	-- Fallback to direct direction vector if pathing fails
 	local directDelta = Vector3.new(targetPos.X - root.Position.X, 0, targetPos.Z - root.Position.Z)
 	return directDelta.Magnitude > 0.1 and directDelta.Unit or Vector3.zero
 end
 
--- Main Loop: Pathfind Ground -> Ascend Hover Above
+-- Execution Loop
 function PathfindingModule:StartHoverTargeting()
 	self:StopPathfinding()
 
@@ -193,17 +215,34 @@ function PathfindingModule:StartHoverTargeting()
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			local flatDistance = flatDelta.Magnitude
 
+			-- If Post Mode is enabled and position is locked, stay at locked post
+			if self.POST_MODE and self.LockPosition then
+				local offsetDelta = self.LockPosition - currentPos
+				if offsetDelta.Magnitude > 0.5 then
+					local wishDir = offsetDelta.Unit
+					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
+				else
+					self.MoveState.velocity = Vector3.zero
+					root.AssemblyLinearVelocity = Vector3.zero
+				end
+				return
+			end
+
 			if flatDistance > self.ENGAGE_DISTANCE then
-				-- PHASE 1: Use PathfindingService waypoints around walls on the ground
+				-- Ground Approach
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- PHASE 2: Close enough -> Clear pathfinding cache & ascend 9 studs directly above
+				-- Within Engagement Range
 				self.MoveState.waypoints = nil
-				
-				local targetHoverPos = enemyPos + Vector3.new(0, self.HOVER_HEIGHT, 0)
-				local offsetDelta = targetHoverPos - currentPos
-				
+				local hoverPos = enemyPos + Vector3.new(0, self.HOVER_HEIGHT, 0)
+
+				if self.POST_MODE then
+					-- Set fixed post coordinate
+					self.LockPosition = hoverPos
+				end
+
+				local offsetDelta = hoverPos - currentPos
 				if offsetDelta.Magnitude > 0.5 then
 					local wishDir = offsetDelta.Unit
 					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
@@ -213,7 +252,9 @@ function PathfindingModule:StartHoverTargeting()
 				end
 			end
 		else
-			-- Target clear: reset velocity and waypoints
+			-- No enemies active: Clear state
+			self.CurrentEnemy = nil
+			self.LockPosition = nil
 			self.MoveState.waypoints = nil
 			self.MoveState.velocity = Vector3.zero
 		end
@@ -225,6 +266,8 @@ function PathfindingModule:StopPathfinding()
 		self.State.Navigating = false
 	end
 
+	self.CurrentEnemy = nil
+	self.LockPosition = nil
 	self.MoveState.done = true
 	self.MoveState.waypoints = nil
 	self.MoveState.velocity = Vector3.new()
