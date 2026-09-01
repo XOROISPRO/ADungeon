@@ -3,7 +3,6 @@ local DungeonFarmModule = {}
 DungeonFarmModule.__index = DungeonFarmModule
 
 local Players = game:GetService("Players")
-local GuiService = game:GetService("GuiService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
 function DungeonFarmModule.Init(State: any, Toggles: any, PathfindingModule: any, AbilityModule: any)
@@ -19,7 +18,7 @@ function DungeonFarmModule.Init(State: any, Toggles: any, PathfindingModule: any
 	return self
 end
 
--- Fires the start UI button directly
+-- Safely fires the start UI button
 function DungeonFarmModule:ClickStartButton()
 	local pgui = self.Player:FindFirstChild("PlayerGui")
 	if not pgui then return end
@@ -33,22 +32,34 @@ function DungeonFarmModule:ClickStartButton()
 	local textButton = frameInner and frameInner:FindFirstChild("TextButton") :: TextButton?
 
 	if textButton and textButton:IsA("TextButton") then
-		-- Simulate click directly on the TextButton
+		-- Approach 1: Virtual Mouse Click
 		local pos = textButton.AbsolutePosition
 		local size = textButton.AbsoluteSize
 		local centerX = pos.X + (size.X / 2)
-		local centerY = pos.Y + (size.Y / 2) + 36 -- Account for TopBar offset
+		local centerY = pos.Y + (size.Y / 2) + 36 -- Account for top bar offset
 
-		VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
-		task.wait(0.05)
-		VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
+		pcall(function()
+			VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
+			task.wait(0.05)
+			VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
+		end)
 
-		-- Fires standard Lua button events directly as fallback
-		for _, connection in pairs(getconnections(textButton.MouseButton1Click)) do
-			connection:Fire()
-		end
-		for _, connection in pairs(getconnections(textButton.MouseButton1Down)) do
-			connection:Fire()
+		-- Approach 2: Safe firesignal execution for exploit environments
+		if typeof(firesignal) == "function" then
+			pcall(function()
+				firesignal(textButton.MouseButton1Click)
+				firesignal(textButton.MouseButton1Down)
+				firesignal(textButton.Activated)
+			end)
+		elseif typeof(getconnections) == "function" then
+			pcall(function()
+				for _, connection in pairs(getconnections(textButton.MouseButton1Click)) do
+					if connection.Function then connection:Fire() end
+				end
+				for _, connection in pairs(getconnections(textButton.Activated)) do
+					if connection.Function then connection:Fire() end
+				end
+			end)
 		end
 	end
 end
