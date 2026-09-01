@@ -5,6 +5,7 @@ AbilityModule.__index = AbilityModule
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualUser = game:GetService("VirtualUser")
 
 function AbilityModule.Init(State: any, Toggles: any, Options: any)
 	local self = setmetatable({}, AbilityModule)
@@ -15,23 +16,32 @@ function AbilityModule.Init(State: any, Toggles: any, Options: any)
 	self.Player = Players.LocalPlayer
 	self.Running = false
 
-	-- Threads for independent ability execution
 	self.QThread = nil :: thread?
 	self.EThread = nil :: thread?
 	self.SpamThread = nil :: thread?
 
-	-- Configurations
-	self.Mode = "Cycle" -- "Cycle" or "Spam"
+	self.Mode = "Cycle"
 	self.SpamInterval = 0.1
 
 	return self
 end
 
--- Helper: Simulate keypress
+-- Universal key press simulator (Solara compatible)
 local function pressKey(keyCode: Enum.KeyCode)
-	VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-	task.wait(0.05)
-	VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+	pcall(function()
+		-- 1. Try Executor Native KeyPress functions (Most reliable on Solara)
+		if typeof(keypress) == "function" and typeof(keyrelease) == "function" then
+			keypress(keyCode.Value)
+			task.wait(0.05)
+			keyrelease(keyCode.Value)
+			return
+		end
+
+		-- 2. VirtualInputManager Fallback
+		VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+		task.wait(0.05)
+		VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+	end)
 end
 
 -- UI Readers
@@ -43,8 +53,7 @@ function AbilityModule:IsBusyCasting(): boolean
 			return busyVal.Value
 		end
 	end
-	
-	-- Fallback check in workspace root for character model
+
 	local charModel = Workspace:FindFirstChild(self.Player.Name)
 	if charModel then
 		local busyVal = charModel:FindFirstChild("busyCasting")
@@ -87,16 +96,13 @@ function AbilityModule:GetCooldown(abilityType: "Q" | "E"): number
 	return 0.0
 end
 
--- Individual Ability Handler (Runs independently per key)
+-- Independent Ability Loop
 function AbilityModule:RunIndependentAbility(key: Enum.KeyCode, abilityType: "Q" | "E")
 	while self.Running and self.Mode == "Cycle" do
-		-- 1. Wait until the specific ability's cooldown reaches 0.0
 		if self:GetCooldown(abilityType) <= 0 then
-			-- 2. Wait until character finishes any active casting state
 			if not self:IsBusyCasting() then
 				pressKey(key)
-				task.wait(0.1)
-				-- 3. Block this specific thread until casting finishes
+				task.wait(0.15)
 				self:WaitUntilNotBusy()
 			end
 		end
@@ -104,18 +110,15 @@ function AbilityModule:RunIndependentAbility(key: Enum.KeyCode, abilityType: "Q"
 	end
 end
 
--- Core Execution Logic
 function AbilityModule:Start()
 	if self.Running then return end
 	self.Running = true
 
 	if self.Mode == "Cycle" then
-		-- Spawn Q independent loop
 		self.QThread = task.spawn(function()
 			self:RunIndependentAbility(Enum.KeyCode.Q, "Q")
 		end)
 
-		-- Spawn E independent loop
 		self.EThread = task.spawn(function()
 			self:RunIndependentAbility(Enum.KeyCode.E, "E")
 		end)
@@ -138,7 +141,7 @@ end
 
 function AbilityModule:Stop()
 	self.Running = false
-	
+
 	if self.QThread then
 		task.cancel(self.QThread)
 		self.QThread = nil
