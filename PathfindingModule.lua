@@ -17,13 +17,14 @@ function PathfindingModule.Init(State: any, Toggles: any)
 
 	-- Physics & Position Parameters
 	self.MAX_SPEED = 35
-	self.ACCEL = 25
-	self.AIR_ACCEL = 10
+	self.ACCEL = 15 -- Reduced base acceleration for smoother movement
+	self.AIR_ACCEL = 5 -- Air acceleration control
+	self.MAX_AIR_VELOCITY = 25 -- Caps air velocity to prevent anticheat triggers
 	self.FRICTION = 6
 	self.STOP_SPEED = 1.5
 	self.HOVER_HEIGHT = 9
 	self.ENGAGE_DISTANCE = 15
-	self.OFFSET_DISTANCE = 3 -- Distance (in studs) to set the post closer to the player
+	self.OFFSET_DISTANCE = 3
 	self.POST_MODE = true
 
 	-- Active Target & Lock Tracking
@@ -70,14 +71,17 @@ end
 
 function PathfindingModule:StepMovement(root: BasePart, character: Model, wishDir: Vector3, wishSpeed: number, dt: number, targetYVelocity: number)
 	local isGrounded = grounded(character, root)
-	local accelRate = isGrounded and self.ACCEL or self.AIR_ACCEL
+	local currentAccel = isGrounded and self.ACCEL or self.AIR_ACCEL
+	local activeMaxSpeed = isGrounded and wishSpeed or math.min(wishSpeed, self.MAX_AIR_VELOCITY)
 
 	self.MoveState.velocity = applyFriction(self.MoveState.velocity, isGrounded, self.FRICTION, self.STOP_SPEED, dt)
-	self.MoveState.velocity = accel(self.MoveState.velocity, wishDir, wishSpeed, accelRate, dt)
+	self.MoveState.velocity = accel(self.MoveState.velocity, wishDir, activeMaxSpeed, currentAccel, dt)
 	
+	-- Clamp final air velocity to avoid physics engine snaps
+	local clampedY = math.clamp(targetYVelocity, -self.MAX_AIR_VELOCITY, self.MAX_AIR_VELOCITY)
 	root.AssemblyLinearVelocity = Vector3.new(
 		self.MoveState.velocity.X, 
-		targetYVelocity, 
+		clampedY, 
 		self.MoveState.velocity.Z
 	)
 end
@@ -88,6 +92,14 @@ end
 
 function PathfindingModule:SetWalkSpeed(speed: number)
 	self.MAX_SPEED = speed
+end
+
+function PathfindingModule:SetAirVelocity(maxAirVel: number)
+	self.MAX_AIR_VELOCITY = maxAirVel
+end
+
+function PathfindingModule:SetAirAccel(airAccel: number)
+	self.AIR_ACCEL = airAccel
 end
 
 function PathfindingModule:SetOffsetDistance(offset: number)
@@ -220,7 +232,6 @@ function PathfindingModule:StartHoverTargeting()
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			local flatDistance = flatDelta.Magnitude
 
-			-- If Post Mode is enabled and position is locked, stay at locked post and face down
 			if self.POST_MODE and self.LockPosition then
 				faceTargetDownward(root, enemyPos)
 				local offsetDelta = self.LockPosition - currentPos
@@ -235,11 +246,9 @@ function PathfindingModule:StartHoverTargeting()
 			end
 
 			if flatDistance > self.ENGAGE_DISTANCE then
-				-- Ground Approach
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- Within Hover Range: Calculate Post Offset (Closer to Player)
 				local playerToEnemy = (enemyPos - currentPos)
 				local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
 
@@ -250,8 +259,6 @@ function PathfindingModule:StartHoverTargeting()
 				end
 
 				local hoverPos = targetHoverPoint + Vector3.new(0, self.HOVER_HEIGHT, 0)
-
-				-- Rotate character downwards directly facing the enemy
 				faceTargetDownward(root, enemyPos)
 
 				self.MoveState.waypoints = nil
