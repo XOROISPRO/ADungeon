@@ -5,7 +5,6 @@ PathfindingModule.__index = PathfindingModule
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
-local PathfindingService = game:GetService("PathfindingService")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
@@ -22,14 +21,11 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.FRICTION = 6
 	self.STOP_SPEED = 1.5
 	self.HOVER_HEIGHT = 9
+	self.ENGAGE_DISTANCE = 15 -- Distance threshold to start ascending above the target
 
 	-- Movement State Vector Tracker
 	self.MoveState = {
 		velocity = Vector3.new(),
-		waypoints = nil :: {PathWaypoint | Vector3}?,
-		waypointIndex = 1,
-		wpStartTime = 0,
-		lastWpPos = nil :: Vector3?,
 		done = true,
 	}
 
@@ -66,17 +62,17 @@ local function accel(velocity: Vector3, wishDir: Vector3, wishSpeed: number, acc
 	return velocity + wishDir * math.min(accelRate * dt * wishSpeed, add)
 end
 
-function PathfindingModule:StepMovement(root: BasePart, character: Model, wishDir: Vector3, wishSpeed: number, dt: number)
+function PathfindingModule:StepMovement(root: BasePart, character: Model, wishDir: Vector3, wishSpeed: number, dt: number, targetYVelocity: number)
 	local isGrounded = grounded(character, root)
 	local accelRate = isGrounded and self.ACCEL or self.AIR_ACCEL
 
 	self.MoveState.velocity = applyFriction(self.MoveState.velocity, isGrounded, self.FRICTION, self.STOP_SPEED, dt)
 	self.MoveState.velocity = accel(self.MoveState.velocity, wishDir, wishSpeed, accelRate, dt)
 	
-	-- Maintain target altitude directly via velocity vector component adjustments
+	-- Apply calculated horizontal speed alongside vertical approach velocity
 	root.AssemblyLinearVelocity = Vector3.new(
 		self.MoveState.velocity.X, 
-		wishDir.Y * wishSpeed, 
+		targetYVelocity, 
 		self.MoveState.velocity.Z
 	)
 end
@@ -122,7 +118,7 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 	return closestEnemyPart
 end
 
--- Continuous Vector Hover Logic over Target Enemies
+-- Ground Approach -> Aerial Hover Logic Loop
 function PathfindingModule:StartHoverTargeting()
 	self:StopPathfinding()
 
@@ -138,20 +134,33 @@ function PathfindingModule:StartHoverTargeting()
 
 		local enemyRoot = self:GetClosestEnemy()
 		if enemyRoot then
-			local targetPos = enemyRoot.Position + Vector3.new(0, self.HOVER_HEIGHT, 0)
-			local delta = targetPos - root.Position
-			local dist = delta.Magnitude
+			-- Calculate 2D flat distance to determine approach phase
+			local currentPos = root.Position
+			local enemyPos = enemyRoot.Position
+			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
+			local flatDistance = flatDelta.Magnitude
 
-			if dist > 0.5 then
-				local wishDir = delta.Unit
-				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt)
+			if flatDistance > self.ENGAGE_DISTANCE then
+				-- PHASE 1: Ground-level pathing towards enemy target
+				local wishDir = flatDelta.Magnitude > 0 and flatDelta.Unit or Vector3.zero
+				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				self.MoveState.velocity = Vector3.new()
-				root.AssemblyLinearVelocity = Vector3.zero
+				-- PHASE 2: Within engagement range -> Fly/Hover above the enemy model
+				local targetHoverPos = enemyPos + Vector3.new(0, self.HOVER_HEIGHT, 0)
+				local offsetDelta = targetHoverPos - currentPos
+				
+				if offsetDelta.Magnitude > 0.5 then
+					local wishDir = offsetDelta.Unit
+					-- Apply full 3D vector velocity to fly directly above
+					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
+				else
+					self.MoveState.velocity = Vector3.zero
+					root.AssemblyLinearVelocity = Vector3.zero
+				end
 			end
 		else
-			self.MoveState.velocity = Vector3.new()
-			root.AssemblyLinearVelocity = Vector3.zero
+			-- Target defeated or clear: reset velocity and return to gravity physics
+			self.MoveState.velocity = Vector3.zero
 		end
 	end)
 end
