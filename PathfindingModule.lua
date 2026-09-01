@@ -23,6 +23,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.STOP_SPEED = 1.5
 	self.HOVER_HEIGHT = 9
 	self.ENGAGE_DISTANCE = 15
+	self.OFFSET_DISTANCE = 3 -- Distance (in studs) to set the post closer to the player
 	self.POST_MODE = true
 
 	-- Active Target & Lock Tracking
@@ -87,6 +88,10 @@ end
 
 function PathfindingModule:SetWalkSpeed(speed: number)
 	self.MAX_SPEED = speed
+end
+
+function PathfindingModule:SetOffsetDistance(offset: number)
+	self.OFFSET_DISTANCE = offset
 end
 
 function PathfindingModule:SetPostMode(enabled: boolean)
@@ -234,11 +239,22 @@ function PathfindingModule:StartHoverTargeting()
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- Within Hover Range: Face character straight down at enemy target
+				-- Within Hover Range: Calculate Post Offset (Closer to Player)
+				local playerToEnemy = (enemyPos - currentPos)
+				local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
+
+				local targetHoverPoint = enemyPos
+				if flatPlayerToEnemy.Magnitude > self.OFFSET_DISTANCE then
+					local approachDir = flatPlayerToEnemy.Unit
+					targetHoverPoint = enemyPos - (approachDir * self.OFFSET_DISTANCE)
+				end
+
+				local hoverPos = targetHoverPoint + Vector3.new(0, self.HOVER_HEIGHT, 0)
+
+				-- Rotate character downwards directly facing the enemy
 				faceTargetDownward(root, enemyPos)
 
 				self.MoveState.waypoints = nil
-				local hoverPos = enemyPos + Vector3.new(0, self.HOVER_HEIGHT, 0)
 
 				if self.POST_MODE then
 					self.LockPosition = hoverPos
