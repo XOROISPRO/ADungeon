@@ -18,9 +18,10 @@ function DungeonFarmModule.Init(State: any, Toggles: any, PathfindingModule: any
 	return self
 end
 
-- Safely fires the start UI button without mouse cursor movement
+-- Safely fires the start UI button without mouse cursor movement
 function DungeonFarmModule:ClickStartButton()
-	print("clicking")
+	print("[DungeonFarmModule] Clicking start button...")
+	
 	local pgui = self.Player:FindFirstChild("PlayerGui")
 	if not pgui then return end
 
@@ -33,37 +34,45 @@ function DungeonFarmModule:ClickStartButton()
 	local textButton = frameInner and frameInner:FindFirstChild("TextButton") :: TextButton?
 
 	if textButton and textButton:IsA("TextButton") then
-		-- Solara environment check workaround
-		local isSolara = identifyexecutor and string.find(string.lower(identifyexecutor()), "solara")
+		local executorName = typeof(identifyexecutor) == "function" and identifyexecutor() or ""
+		local isSolara = string.find(string.lower(executorName), "solara") ~= nil
 
-		-- 1. Direct Function invocation (Forced for Solara, fallback for others if firesignal missing)
-		if isSolara or typeof(firesignal) ~= "function" then
-			if typeof(getconnections) == "function" then
-				pcall(function()
-					local signalsToFire = {
-						textButton.MouseButton1Click,
-						textButton.MouseButton1Down,
-						textButton.Activated
-					}
-
-					for _, signal in ipairs(signalsToFire) do
-						for _, connection in pairs(getconnections(signal)) do
-							-- Solara direct environment execution
-							if typeof(connection.Function) == "function" then
-								task.spawn(connection.Function) -- Safely spawns in a separate thread
-							-- Fallback for standard executor :Fire() method
-							elseif typeof(connection.Fire) == "function" then
-								pcall(function() connection:Fire() end)
-							end
-						end
-					end
-				end)
+		-- Helper function to safely invoke connections
+		local function fireSignalConnections(signal: RBXScriptSignal)
+			if typeof(getconnections) ~= "function" then return end
+			
+			for _, connection in pairs(getconnections(signal)) do
+				if typeof(connection.Function) == "function" then
+					-- Solara-safe execution
+					task.spawn(function()
+						pcall(connection.Function)
+					end)
+				elseif typeof(connection.Fire) == "function" then
+					pcall(function()
+						connection:Fire()
+					end)
+				end
 			end
-		-- 2. Standard Firesignal execution (For high-end executors)
-		else
+		end
+
+		if isSolara or typeof(firesignal) ~= "function" then
 			pcall(function()
-				firesignal(textButton.MouseButton1Click)
+				local signalsToFire = {
+					textButton.MouseButton1Click,
+					textButton.MouseButton1Down,
+					textButton.MouseButton1Up,
+					textButton.Activated
+				}
+
+				for _, signal in ipairs(signalsToFire) do
+					fireSignalConnections(signal)
+				end
+			end)
+		else
+			-- High-end executor execution
+			pcall(function()
 				firesignal(textButton.MouseButton1Down)
+				firesignal(textButton.MouseButton1Click)
 				firesignal(textButton.Activated)
 			end)
 		end
