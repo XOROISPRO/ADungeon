@@ -14,7 +14,11 @@ function AbilityModule.Init(State: any, Toggles: any, Options: any)
 	self.Options = Options
 	self.Player = Players.LocalPlayer
 	self.Running = false
-	self.Thread = nil :: thread?
+
+	-- Threads for independent ability execution
+	self.QThread = nil :: thread?
+	self.EThread = nil :: thread?
+	self.SpamThread = nil :: thread?
 
 	-- Configurations
 	self.Mode = "Cycle" -- "Cycle" or "Spam"
@@ -40,10 +44,10 @@ function AbilityModule:IsBusyCasting(): boolean
 		end
 	end
 	
-	-- Fallback check in workspace.jotla18
-	local jotla = Workspace:FindFirstChild(self.Player.Name)
-	if jotla then
-		local busyVal = jotla:FindFirstChild("busyCasting")
+	-- Fallback check in workspace root for character model
+	local charModel = Workspace:FindFirstChild(self.Player.Name)
+	if charModel then
+		local busyVal = charModel:FindFirstChild("busyCasting")
 		if busyVal and busyVal:IsA("BoolValue") then
 			return busyVal.Value
 		end
@@ -83,45 +87,41 @@ function AbilityModule:GetCooldown(abilityType: "Q" | "E"): number
 	return 0.0
 end
 
-function AbilityModule:WaitUntilCooldownReady(abilityType: "Q" | "E")
-	while self.Running and self:GetCooldown(abilityType) > 0 do
+-- Individual Ability Handler (Runs independently per key)
+function AbilityModule:RunIndependentAbility(key: Enum.KeyCode, abilityType: "Q" | "E")
+	while self.Running and self.Mode == "Cycle" do
+		-- 1. Wait until the specific ability's cooldown reaches 0.0
+		if self:GetCooldown(abilityType) <= 0 then
+			-- 2. Wait until character finishes any active casting state
+			if not self:IsBusyCasting() then
+				pressKey(key)
+				task.wait(0.1)
+				-- 3. Block this specific thread until casting finishes
+				self:WaitUntilNotBusy()
+			end
+		end
 		task.wait(0.05)
 	end
 end
 
--- Core Logic
+-- Core Execution Logic
 function AbilityModule:Start()
 	if self.Running then return end
 	self.Running = true
 
-	self.Thread = task.spawn(function()
-		while self.Running do
-			if self.Mode == "Cycle" then
-				-- Step 1: Wait for Q cooldown to hit 0.0
-				self:WaitUntilCooldownReady("Q")
-				if not self.Running then break end
+	if self.Mode == "Cycle" then
+		-- Spawn Q independent loop
+		self.QThread = task.spawn(function()
+			self:RunIndependentAbility(Enum.KeyCode.Q, "Q")
+		end)
 
-				-- Press Q
-				pressKey(Enum.KeyCode.Q)
-				task.wait(0.1)
-
-				-- Wait until busyCasting is false
-				self:WaitUntilNotBusy()
-				if not self.Running then break end
-
-				-- Step 2: Check/Wait for E cooldown to hit 0.0
-				self:WaitUntilCooldownReady("E")
-				if not self.Running then break end
-
-				-- Press E
-				pressKey(Enum.KeyCode.E)
-				task.wait(0.1)
-
-				-- Wait until busyCasting is false again
-				self:WaitUntilNotBusy()
-
-			elseif self.Mode == "Spam" then
-				-- Press Q & E together if available and not casting
+		-- Spawn E independent loop
+		self.EThread = task.spawn(function()
+			self:RunIndependentAbility(Enum.KeyCode.E, "E")
+		end)
+	elseif self.Mode == "Spam" then
+		self.SpamThread = task.spawn(function()
+			while self.Running and self.Mode == "Spam" do
 				if not self:IsBusyCasting() then
 					if self:GetCooldown("Q") <= 0 then
 						pressKey(Enum.KeyCode.Q)
@@ -132,21 +132,34 @@ function AbilityModule:Start()
 				end
 				task.wait(self.SpamInterval)
 			end
-			task.wait(0.05)
-		end
-	end)
+		end)
+	end
 end
 
 function AbilityModule:Stop()
 	self.Running = false
-	if self.Thread then
-		task.cancel(self.Thread)
-		self.Thread = nil
+	
+	if self.QThread then
+		task.cancel(self.QThread)
+		self.QThread = nil
+	end
+	if self.EThread then
+		task.cancel(self.EThread)
+		self.EThread = nil
+	end
+	if self.SpamThread then
+		task.cancel(self.SpamThread)
+		self.SpamThread = nil
 	end
 end
 
 function AbilityModule:SetMode(mode: string)
+	local wasRunning = self.Running
+	self:Stop()
 	self.Mode = mode
+	if wasRunning then
+		self:Start()
+	end
 end
 
 function AbilityModule:SetSpamInterval(interval: number)
