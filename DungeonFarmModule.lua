@@ -2,8 +2,7 @@
 local DungeonFarmModule = {}
 DungeonFarmModule.__index = DungeonFarmModule
 
-local Players = game:GetService("Players")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 function DungeonFarmModule.Init(State: any, Toggles: any, PathfindingModule: any, AbilityModule: any)
 	local self = setmetatable({}, DungeonFarmModule)
@@ -12,69 +11,19 @@ function DungeonFarmModule.Init(State: any, Toggles: any, PathfindingModule: any
 	self.Toggles = Toggles
 	self.PathfindingModule = PathfindingModule
 	self.AbilityModule = AbilityModule
-	self.Player = Players.LocalPlayer
 	self.Running = false
 
 	return self
 end
 
--- Safely fires the start UI button without mouse cursor movement
-function DungeonFarmModule:ClickStartButton()
-	print("[DungeonFarmModule] Clicking start button...")
-	
-	local pgui = self.Player:FindFirstChild("PlayerGui")
-	if not pgui then return end
-
-	local startBtn = pgui:FindFirstChild("startButton")
-	if not startBtn then return end
-
-	local frame1 = startBtn:FindFirstChild("Frame")
-	local frame3D = frame1 and frame1:FindFirstChild("3d")
-	local frameInner = frame3D and frame3D:FindFirstChild("Frame")
-	local textButton = frameInner and frameInner:FindFirstChild("TextButton") :: TextButton?
-
-	if textButton and textButton:IsA("TextButton") then
-		local executorName = typeof(identifyexecutor) == "function" and identifyexecutor() or ""
-		local isSolara = string.find(string.lower(executorName), "solara") ~= nil
-
-		-- Helper function to safely invoke connections
-		local function fireSignalConnections(signal: RBXScriptSignal)
-			if typeof(getconnections) ~= "function" then return end
-			
-			for _, connection in pairs(getconnections(signal)) do
-				if typeof(connection.Function) == "function" then
-					-- Solara-safe execution
-					task.spawn(function()
-						pcall(connection.Function)
-					end)
-				elseif typeof(connection.Fire) == "function" then
-					pcall(function()
-						connection:Fire()
-					end)
-				end
-			end
-		end
-
-		if isSolara or typeof(firesignal) ~= "function" then
-			pcall(function()
-				local signalsToFire = {
-					textButton.MouseButton1Click,
-					textButton.MouseButton1Down,
-					textButton.MouseButton1Up,
-					textButton.Activated
-				}
-
-				for _, signal in ipairs(signalsToFire) do
-					fireSignalConnections(signal)
-				end
-			end)
-		else
-			-- High-end executor execution
-			pcall(function()
-				firesignal(textButton.MouseButton1Down)
-				firesignal(textButton.MouseButton1Click)
-				firesignal(textButton.Activated)
-			end)
+-- Fires the start remote directly to initiate the dungeon
+function DungeonFarmModule:TriggerStartRemote()
+	local remotes = ReplicatedStorage:FindFirstChild("remotes")
+	if remotes then
+		local changeStartValue = remotes:FindFirstChild("changeStartValue") :: RemoteEvent?
+		if changeStartValue and changeStartValue:IsA("RemoteEvent") then
+			changeStartValue:FireServer()
+			print("[DungeonFarmModule] Fired changeStartValue RemoteEvent.")
 		end
 	end
 end
@@ -84,8 +33,8 @@ function DungeonFarmModule:Start()
 	self.Running = true
 	self.State.AutoFarmActive = true
 
-	-- Direct Start Button Input
-	self:ClickStartButton()
+	-- Fire the dungeon start remote event directly
+	self:TriggerStartRemote()
 
 	if self.PathfindingModule then
 		self.PathfindingModule:StartHoverTargeting()
