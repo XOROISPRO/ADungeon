@@ -5,6 +5,7 @@ PathfindingModule.__index = PathfindingModule
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local PathfindingService = game:GetService("PathfindingService")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
@@ -21,11 +22,14 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.FRICTION = 6
 	self.STOP_SPEED = 1.5
 	self.HOVER_HEIGHT = 9
-	self.ENGAGE_DISTANCE = 15 -- Distance threshold to start ascending above the target
+	self.ENGAGE_DISTANCE = 15 -- Distance threshold to switch from ground pathing to hover
 
-	-- Movement State Vector Tracker
+	-- Movement & Waypoint State
 	self.MoveState = {
 		velocity = Vector3.new(),
+		waypoints = nil :: {PathWaypoint}?,
+		waypointIndex = 1,
+		lastComputeTime = 0,
 		done = true,
 	}
 
@@ -69,7 +73,6 @@ function PathfindingModule:StepMovement(root: BasePart, character: Model, wishDi
 	self.MoveState.velocity = applyFriction(self.MoveState.velocity, isGrounded, self.FRICTION, self.STOP_SPEED, dt)
 	self.MoveState.velocity = accel(self.MoveState.velocity, wishDir, wishSpeed, accelRate, dt)
 	
-	-- Apply calculated horizontal speed alongside vertical approach velocity
 	root.AssemblyLinearVelocity = Vector3.new(
 		self.MoveState.velocity.X, 
 		targetYVelocity, 
@@ -118,7 +121,58 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 	return closestEnemyPart
 end
 
--- Ground Approach -> Aerial Hover Logic Loop
+-- Waypoint direction resolver for ground phase
+function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3): Vector3
+	local state = self.MoveState
+	local currentTime = tick()
+
+	-- Recompute path periodically (every 0.5s) to stay updated
+	if not state.waypoints or (currentTime - state.lastComputeTime) > 0.5 then
+		state.lastComputeTime = currentTime
+		local path = PathfindingService:CreatePath({
+			AgentRadius = 2,
+			AgentHeight = 5,
+			AgentCanJump = true
+		})
+
+		local ok, _ = pcall(function()
+			path:ComputeAsync(root.Position, targetPos)
+		end)
+
+		if ok and path.Status == Enum.PathStatus.Success then
+			state.waypoints = path:GetWaypoints()
+			state.waypointIndex = 1
+		else
+			state.waypoints = nil
+		end
+	end
+
+	-- Follow path waypoints if available
+	if state.waypoints and state.waypointIndex <= #state.waypoints then
+		local currentWP = state.waypoints[state.waypointIndex]
+		local wpPos = currentWP.Position
+		local flatDelta = Vector3.new(wpPos.X - root.Position.X, 0, wpPos.Z - root.Position.Z)
+
+		-- Advance waypoint when close enough
+		if flatDelta.Magnitude < 3 then
+			state.waypointIndex += 1
+			if state.waypointIndex <= #state.waypoints then
+				local nextWP = state.waypoints[state.waypointIndex]
+				flatDelta = Vector3.new(nextWP.Position.X - root.Position.X, 0, nextWP.Position.Z - root.Position.Z)
+			end
+		end
+
+		if flatDelta.Magnitude > 0.1 then
+			return flatDelta.Unit
+		end
+	end
+
+	-- Fallback to direct direction vector if pathing fails
+	local directDelta = Vector3.new(targetPos.X - root.Position.X, 0, targetPos.Z - root.Position.Z)
+	return directDelta.Magnitude > 0.1 and directDelta.Unit or Vector3.zero
+end
+
+-- Main Loop: Pathfind Ground -> Ascend Hover Above
 function PathfindingModule:StartHoverTargeting()
 	self:StopPathfinding()
 
@@ -134,24 +188,24 @@ function PathfindingModule:StartHoverTargeting()
 
 		local enemyRoot = self:GetClosestEnemy()
 		if enemyRoot then
-			-- Calculate 2D flat distance to determine approach phase
 			local currentPos = root.Position
 			local enemyPos = enemyRoot.Position
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			local flatDistance = flatDelta.Magnitude
 
 			if flatDistance > self.ENGAGE_DISTANCE then
-				-- PHASE 1: Ground-level pathing towards enemy target
-				local wishDir = flatDelta.Magnitude > 0 and flatDelta.Unit or Vector3.zero
+				-- PHASE 1: Use PathfindingService waypoints around walls on the ground
+				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- PHASE 2: Within engagement range -> Fly/Hover above the enemy model
+				-- PHASE 2: Close enough -> Clear pathfinding cache & ascend 9 studs directly above
+				self.MoveState.waypoints = nil
+				
 				local targetHoverPos = enemyPos + Vector3.new(0, self.HOVER_HEIGHT, 0)
 				local offsetDelta = targetHoverPos - currentPos
 				
 				if offsetDelta.Magnitude > 0.5 then
 					local wishDir = offsetDelta.Unit
-					-- Apply full 3D vector velocity to fly directly above
 					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
 				else
 					self.MoveState.velocity = Vector3.zero
@@ -159,7 +213,8 @@ function PathfindingModule:StartHoverTargeting()
 				end
 			end
 		else
-			-- Target defeated or clear: reset velocity and return to gravity physics
+			-- Target clear: reset velocity and waypoints
+			self.MoveState.waypoints = nil
 			self.MoveState.velocity = Vector3.zero
 		end
 	end)
@@ -171,6 +226,7 @@ function PathfindingModule:StopPathfinding()
 	end
 
 	self.MoveState.done = true
+	self.MoveState.waypoints = nil
 	self.MoveState.velocity = Vector3.new()
 
 	if self.MoveConnection then
