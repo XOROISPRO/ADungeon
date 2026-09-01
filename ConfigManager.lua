@@ -15,7 +15,6 @@ function ConfigManager.Init(State: any, Options: any, Toggles: any, Modules: { A
 	self.FolderName = "DungeonFarmConfig"
 	self.AutoLoadFile = self.FolderName .. "/autoload.txt"
 
-	-- Ensure root folder exists
 	if typeof(makefolder) == "function" and typeof(isfolder) == "function" then
 		if not isfolder(self.FolderName) then
 			makefolder(self.FolderName)
@@ -25,12 +24,10 @@ function ConfigManager.Init(State: any, Options: any, Toggles: any, Modules: { A
 	return self
 end
 
--- Formats configuration path
 function ConfigManager:GetPath(configName: string): string
 	return self.FolderName .. "/" .. configName .. ".json"
 end
 
--- Extracts current settings into a table
 function ConfigManager:ExportSettings(): { [string]: any }
 	return {
 		Toggles = self.Toggles or {},
@@ -38,7 +35,6 @@ function ConfigManager:ExportSettings(): { [string]: any }
 	}
 end
 
--- Applies loaded data into live state & module settings
 function ConfigManager:ImportSettings(data: { [string]: any })
 	if data.Toggles then
 		for key, val in pairs(data.Toggles) do
@@ -52,13 +48,11 @@ function ConfigManager:ImportSettings(data: { [string]: any })
 		end
 	end
 
-	-- Update active module states if options exist
-	if self.Modules.PathfindingModule and self.Options.HoverHeight then
-		self.Modules.PathfindingModule:SetHoverHeight(self.Options.HoverHeight)
-	end
-
-	if self.Modules.PathfindingModule and self.Options.WalkSpeed then
-		self.Modules.PathfindingModule:SetWalkSpeed(self.Options.WalkSpeed)
+	if self.Modules.PathfindingModule then
+		if self.Options.HoverHeight then self.Modules.PathfindingModule:SetHoverHeight(self.Options.HoverHeight) end
+		if self.Options.WalkSpeed then self.Modules.PathfindingModule:SetWalkSpeed(self.Options.WalkSpeed) end
+		if self.Options.AirVelocitySlider then self.Modules.PathfindingModule:SetAirVelocity(self.Options.AirVelocitySlider) end
+		if self.Options.AirAccelSlider then self.Modules.PathfindingModule:SetAirAccel(self.Options.AirAccelSlider) end
 	end
 
 	if self.Modules.AbilityModule and self.Options.AbilityMode then
@@ -70,7 +64,6 @@ function ConfigManager:ImportSettings(data: { [string]: any })
 	end
 end
 
--- 1. Save Config
 function ConfigManager:SaveConfig(configName: string): boolean
 	if not configName or configName == "" then return false end
 	if typeof(writefile) ~= "function" then return false end
@@ -91,7 +84,6 @@ function ConfigManager:SaveConfig(configName: string): boolean
 	return false
 end
 
--- 2. Load Config
 function ConfigManager:LoadConfig(configName: string): boolean
 	if not configName or configName == "" then return false end
 	if typeof(readfile) ~= "function" or typeof(isfile) ~= "function" then return false end
@@ -113,7 +105,6 @@ function ConfigManager:LoadConfig(configName: string): boolean
 	return false
 end
 
--- 3. Delete Config
 function ConfigManager:DeleteConfig(configName: string): boolean
 	if not configName or configName == "" then return false end
 	if typeof(delfile) ~= "function" or typeof(isfile) ~= "function" then return false end
@@ -122,7 +113,6 @@ function ConfigManager:DeleteConfig(configName: string): boolean
 	if isfile(path) then
 		delfile(path)
 
-		-- Clear autoload reference if the deleted file was the autoloaded config
 		if self:GetAutoLoadConfig() == configName then
 			self:SetAutoLoadConfig("")
 		end
@@ -134,7 +124,6 @@ function ConfigManager:DeleteConfig(configName: string): boolean
 	return false
 end
 
--- 4. Get Config List
 function ConfigManager:GetConfigList(): { string }
 	local configs = {}
 	if typeof(listfiles) ~= "function" then return configs end
@@ -157,14 +146,12 @@ function ConfigManager:GetConfigList(): { string }
 	return configs
 end
 
--- 5. Set Autoload Config Target
 function ConfigManager:SetAutoLoadConfig(configName: string)
 	if typeof(writefile) ~= "function" then return end
 	writefile(self.AutoLoadFile, configName or "")
 	print("[ConfigManager] Set autoload target: " .. tostring(configName))
 end
 
--- 6. Get Autoload Config Target
 function ConfigManager:GetAutoLoadConfig(): string
 	if typeof(readfile) ~= "function" or typeof(isfile) ~= "function" then return "" end
 	if isfile(self.AutoLoadFile) then
@@ -173,7 +160,6 @@ function ConfigManager:GetAutoLoadConfig(): string
 	return ""
 end
 
--- 7. Execute Autoload Sequence
 function ConfigManager:AutoLoad()
 	local targetConfig = self:GetAutoLoadConfig()
 	if targetConfig ~= "" then
