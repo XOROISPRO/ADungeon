@@ -32,17 +32,6 @@ function DungeonFarmModule:ClickStartButton()
 	local textButton = frameInner and frameInner:FindFirstChild("TextButton") :: TextButton?
 
 	if textButton and textButton:IsA("TextButton") then
-		-- Approach 1: Virtual Mouse Click
-		local pos = textButton.AbsolutePosition
-		local size = textButton.AbsoluteSize
-		local centerX = pos.X + (size.X / 2)
-		local centerY = pos.Y + (size.Y / 2) + 36 -- Account for top bar offset
-
-		pcall(function()
-			VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
-			task.wait(0.05)
-			VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
-		end)
 
 		-- Approach 2: Safe firesignal execution for exploit environments
 		if typeof(firesignal) == "function" then
