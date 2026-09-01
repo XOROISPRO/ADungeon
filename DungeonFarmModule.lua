@@ -42,11 +42,18 @@ function DungeonFarmModule:ClickStartButton()
 			end)
 		elseif typeof(getconnections) == "function" then
 			pcall(function()
+				-- Loop through MouseButton1Click connections
 				for _, connection in pairs(getconnections(textButton.MouseButton1Click)) do
-					if connection.Function then connection:Fire() end
+				    if connection.Function then 
+				        task.spawn(connection.Function) -- Calls the function safely in a new thread
+				    end
 				end
+				
+				-- Loop through Activated connections
 				for _, connection in pairs(getconnections(textButton.Activated)) do
-					if connection.Function then connection:Fire() end
+				    if connection.Function then 
+				        task.spawn(connection.Function) -- Calls the function safely in a new thread
+				    end
 				end
 			end)
 		end
