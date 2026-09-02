@@ -102,7 +102,7 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then return nil end
 
-	-- 1. Keep old target until it dies or gets destroyed
+	-- Keep old target until it dies or gets destroyed
 	if self.CurrentEnemy and self.CurrentEnemy.Parent then
 		local parentModel = self.CurrentEnemy.Parent
 		local hum = parentModel:FindFirstChildOfClass("Humanoid")
@@ -111,7 +111,7 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 		end
 	end
 
-	-- 2. Clear targets once dead
+	-- Target dead/lost -> Clear target and release locked position
 	self.CurrentEnemy = nil
 	self.LockPosition = nil
 
@@ -143,10 +143,9 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 	return closestEnemyPart
 end
 
--- Force strictly downward orientation without affecting position
+-- Force character orientation facing downwards without overriding velocity/position
 local function faceDownward(root: BasePart)
 	local currentPos = root.Position
-	-- Keeps current position intact while forcing character to face straight down
 	root.CFrame = CFrame.new(currentPos) * CFrame.Angles(-math.rad(90), 0, 0)
 end
 
@@ -216,10 +215,10 @@ function PathfindingModule:StartHoverTargeting()
 			local currentPos = root.Position
 			local enemyPos = enemyRoot.Position
 
-			-- STATIC POST MODE: Locks spot in air and points strictly down
-			if self.POST_MODE and self.LockPosition then
+			-- 1. IF LOCKED ON A STATIC POST: Direct velocity towards LockPosition and keep orientation downward
+			if self.LockPosition then
 				faceDownward(root)
-				
+
 				local postDelta = self.LockPosition - currentPos
 				if postDelta.Magnitude > 0.5 then
 					local wishDir = postDelta.Unit
@@ -231,16 +230,27 @@ function PathfindingModule:StartHoverTargeting()
 				return
 			end
 
-			-- APPROACH GROUND TARGET
+			-- 2. APPROACH ENEMY GROUND POSITION UNTIL ENGAGE DISTANCE
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- SET STATIC HOVER POINT ONCE
-				local hoverPos = enemyPos + Vector3.new(0, self.HOVER_HEIGHT, 0)
+				-- 3. FIRST TIME ENTERING ENGAGEMENT RANGE:
+				-- Compute static post (Offset distance back towards player + Hover Height)
+				local playerToEnemy = (enemyPos - currentPos)
+				local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
+
+				local targetHoverPoint = enemyPos
+				if flatPlayerToEnemy.Magnitude > self.OFFSET_DISTANCE then
+					local approachDir = flatPlayerToEnemy.Unit
+					targetHoverPoint = enemyPos - (approachDir * self.OFFSET_DISTANCE)
+				end
+
+				local hoverPos = targetHoverPoint + Vector3.new(0, self.HOVER_HEIGHT, 0)
 				self.MoveState.waypoints = nil
 
+				-- Lock position so it never changes until enemy dies or target changes
 				if self.POST_MODE then
 					self.LockPosition = hoverPos
 				end
