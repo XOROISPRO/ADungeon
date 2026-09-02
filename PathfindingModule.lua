@@ -130,7 +130,6 @@ function PathfindingModule:SetBossMode(enabled: boolean)
 	print("[DEBUG] BOSS_MODE Toggled ->", self.BOSS_MODE)
 end
 
--- Checks if player's RootPart is physically inside the bossRoom bounds
 function PathfindingModule:IsInBossRoom(root: BasePart): boolean
 	local dungeon = Workspace:FindFirstChild("dungeon")
 	if not dungeon then return false end
@@ -138,10 +137,8 @@ function PathfindingModule:IsInBossRoom(root: BasePart): boolean
 	local bossRoom = dungeon:FindFirstChild("bossRoom")
 	if not bossRoom then return false end
 
-	-- Bounds check via model bounding box or direct distance to room center
-	local roomCFrame, roomSize
 	if bossRoom:IsA("Model") then
-		roomCFrame, roomSize = bossRoom:GetBoundingBox()
+		local roomCFrame, roomSize = bossRoom:GetBoundingBox()
 		local localPos = roomCFrame:PointToObjectSpace(root.Position)
 		local halfSize = roomSize * 0.5
 		return math.abs(localPos.X) <= halfSize.X and math.abs(localPos.Z) <= halfSize.Z
@@ -178,7 +175,6 @@ function PathfindingModule:GetClosestEnemy(): (BasePart?, boolean)
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then return nil, false end
 
-	-- Only activate boss mode when player is inside the boss room
 	local inBossRoom = self:IsInBossRoom(root)
 	if self.BOSS_MODE and inBossRoom then
 		local bossRoot = self:GetBossEnemy()
@@ -335,7 +331,7 @@ function PathfindingModule:StartHoverTargeting()
 			local enemyPos = enemyRoot.Position
 			local now = tick()
 
-			-- Position Lock & Anti-Drift Check
+			-- Locked Post Check
 			if self.LockPosition then
 				local postDelta = self.LockPosition - currentPos
 				local distToLock = postDelta.Magnitude
@@ -350,58 +346,41 @@ function PathfindingModule:StartHoverTargeting()
 					))
 				end
 
-				-- Anti-drift pull-back
-				if distToLock > self.MAX_DRIFT_DISTANCE then
-					if root.Anchored then
-						root.Anchored = false
-						self.IsAnchoredAtPost = false
-					end
+				-- 1 Stud Leeway for Boss Mode
+				local anchorLeeway = isBoss and 1.0 or 3.5
 
-					if isBoss then
-						faceTarget(root, enemyPos)
-					else
-						faceDownward(root)
-					end
-
-					local correctionSpeed = math.clamp(self.MAX_SPEED * (distToLock / 5), self.MAX_SPEED, self.MAX_SPEED * 2)
-					local pullVelocity = postDelta.Unit * correctionSpeed
-					root.AssemblyLinearVelocity = pullVelocity
-					self.MoveState.velocity = Vector3.new(pullVelocity.X, 0, pullVelocity.Z)
-					return
-				end
-
-				-- Reached Post: Anchor smooth
-				if distToLock <= 3.5 then
+				if distToLock <= anchorLeeway then
+					-- Stop Movement and Anchor directly where character is
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
 					
 					if isBoss then
 						faceTarget(root, enemyPos)
-						root.CFrame = CFrame.new(self.LockPosition) * (root.CFrame - root.CFrame.Position)
 					else
 						faceDownward(root)
-						root.CFrame = CFrame.new(self.LockPosition) * CFrame.Angles(-math.rad(90), 0, 0)
 					end
 
 					if not root.Anchored then
 						root.Anchored = true
 						self.IsAnchoredAtPost = true
-						print("[DEBUG] ANCHORED AT POST SPOT ->", self.LockPosition)
+						print("[DEBUG] ANCHORED AT POST SPOT ->", root.Position)
 					end
 				else
+					-- Unanchor and move naturally via physics/pathfinding if pushed or outside 1-stud leeway
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
 					end
-					
+
 					if isBoss then
 						faceTarget(root, enemyPos)
+						local wishDir = self:GetGroundWishDir(root, self.LockPosition)
+						self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 					else
 						faceDownward(root)
+						local wishDir = postDelta.Unit
+						self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
 					end
-
-					local wishDir = postDelta.Unit
-					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
 				end
 				return
 			end
@@ -412,7 +391,7 @@ function PathfindingModule:StartHoverTargeting()
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- Lock Ground Post at Boss initial spawn position once inside room
+				-- Lock Ground Post at Boss initial spawn position
 				if isBoss then
 					self.LockPosition = enemyPos
 					print("[DEBUG] BOSS ROOM REACHED -> LOCKED GROUND POST AT:", enemyPos)
