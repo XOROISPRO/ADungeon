@@ -29,6 +29,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	-- Active Target & Static Post Tracking
 	self.CurrentEnemy = nil :: BasePart?
 	self.LockPosition = nil :: Vector3?
+	self.IsAnchoredAtPost = false
 
 	self.MoveState = {
 		velocity = Vector3.new(),
@@ -69,6 +70,12 @@ local function accel(velocity: Vector3, wishDir: Vector3, wishSpeed: number, acc
 end
 
 function PathfindingModule:StepMovement(root: BasePart, character: Model, wishDir: Vector3, wishSpeed: number, dt: number, targetYVelocity: number)
+	if root.Anchored then
+		root.Anchored = false
+		self.IsAnchoredAtPost = false
+		print("[DEBUG] Unanchored RootPart for movement step.")
+	end
+
 	local isGrounded = grounded(character, root)
 	local currentAccel = isGrounded and self.ACCEL or self.AIR_ACCEL
 	local activeMaxSpeed = isGrounded and wishSpeed or math.min(wishSpeed, self.MAX_AIR_VELOCITY)
@@ -94,6 +101,13 @@ function PathfindingModule:SetPostMode(enabled: boolean)
 	self.POST_MODE = enabled
 	if not enabled then
 		self.LockPosition = nil
+		local char = self.Player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if root and root.Anchored then
+			root.Anchored = false
+			self.IsAnchoredAtPost = false
+			print("[DEBUG] Post mode disabled -> Unanchored RootPart.")
+		end
 	end
 	print("[DEBUG] POST_MODE Toggled ->", self.POST_MODE)
 end
@@ -113,12 +127,18 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 		end
 	end
 
-	-- Target dead/lost -> Clear target and release locked position
+	-- Target dead/lost -> Clear target and release locked position + anchor
 	if self.CurrentEnemy then
-		print("[DEBUG] Target died/lost. Clearing current target & post lock.")
+		print("[DEBUG] Target died/lost. Clearing current target, post lock, & unanchoring.")
 	end
 	self.CurrentEnemy = nil
 	self.LockPosition = nil
+	
+	if root.Anchored then
+		root.Anchored = false
+		self.IsAnchoredAtPost = false
+		print("[DEBUG] Target cleared -> Unanchored RootPart.")
+	end
 
 	local dungeon = Workspace:FindFirstChild("dungeon")
 	if not dungeon then return nil end
@@ -229,29 +249,39 @@ function PathfindingModule:StartHoverTargeting()
 
 			-- 1. IF LOCKED ON A STATIC POST
 			if self.LockPosition then
-				faceDownward(root)
-
 				local postDelta = self.LockPosition - currentPos
 				local distToLock = postDelta.Magnitude
 
 				-- Periodic diagnostic print every 0.5s
 				if (now - self.LastDebugPrint) > 0.5 then
 					self.LastDebugPrint = now
-					print(string.format("[POST ACTIVE] DistToLock: %.2f | Velocity: (%.1f, %.1f, %.1f) | RootPos: (%.1f, %.1f, %.1f)", 
+					print(string.format("[POST ACTIVE] DistToLock: %.2f | Anchored: %s | RootPos: (%.1f, %.1f, %.1f)", 
 						distToLock, 
-						root.AssemblyLinearVelocity.X, root.AssemblyLinearVelocity.Y, root.AssemblyLinearVelocity.Z,
+						tostring(root.Anchored),
 						currentPos.X, currentPos.Y, currentPos.Z
 					))
 				end
 
 				if distToLock > 1.5 then
+					if root.Anchored then
+						root.Anchored = false
+						self.IsAnchoredAtPost = false
+						print("[DEBUG] Traveling to post lock -> Unanchored RootPart.")
+					end
+					faceDownward(root)
 					local wishDir = postDelta.Unit
 					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
 				else
-					-- Zero out velocity and snap CFrame to counteract gravity drift
+					-- Reached post lock -> Zero out movement and ANCHOR
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
-					root.CFrame = CFrame.new(self.LockPosition) * CFrame.Angles(-math.rad(90), 0, 0)
+					
+					if not root.Anchored then
+						root.CFrame = CFrame.new(self.LockPosition) * CFrame.Angles(-math.rad(90), 0, 0)
+						root.Anchored = true
+						self.IsAnchoredAtPost = true
+						print("[DEBUG] REACHED POST SPOT -> Anchored RootPart at:", self.LockPosition)
+					end
 				end
 				return
 			end
@@ -280,16 +310,25 @@ function PathfindingModule:StartHoverTargeting()
 					print("[DEBUG] POST LOCKED AT ->", hoverPos)
 				end
 
-				faceDownward(root)
-
 				local offsetDelta = hoverPos - currentPos
 				if offsetDelta.Magnitude > 1.5 then
+					if root.Anchored then
+						root.Anchored = false
+						self.IsAnchoredAtPost = false
+					end
+					faceDownward(root)
 					local wishDir = offsetDelta.Unit
 					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
 				else
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
-					root.CFrame = CFrame.new(hoverPos) * CFrame.Angles(-math.rad(90), 0, 0)
+					
+					if self.POST_MODE and not root.Anchored then
+						root.CFrame = CFrame.new(hoverPos) * CFrame.Angles(-math.rad(90), 0, 0)
+						root.Anchored = true
+						self.IsAnchoredAtPost = true
+						print("[DEBUG] REACHED POST SPOT -> Anchored RootPart at:", hoverPos)
+					end
 				end
 			end
 		else
@@ -297,6 +336,11 @@ function PathfindingModule:StartHoverTargeting()
 			self.LockPosition = nil
 			self.MoveState.waypoints = nil
 			self.MoveState.velocity = Vector3.zero
+			if root.Anchored then
+				root.Anchored = false
+				self.IsAnchoredAtPost = false
+				print("[DEBUG] No Enemy -> Unanchored RootPart.")
+			end
 		end
 	end)
 end
@@ -323,6 +367,11 @@ function PathfindingModule:StopPathfinding()
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if root then
 		root.AssemblyLinearVelocity = Vector3.zero
+		if root.Anchored then
+			root.Anchored = false
+			self.IsAnchoredAtPost = false
+			print("[DEBUG] Stopped Pathfinding -> Unanchored RootPart.")
+		end
 	end
 end
 
