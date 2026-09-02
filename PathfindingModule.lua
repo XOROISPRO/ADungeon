@@ -28,8 +28,8 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.BOSS_MODE = false
 
 	-- Drift & Speed Anomaly Thresholds
-	self.MAX_DRIFT_DISTANCE = 5.0 -- Distance threshold before smooth correction kicks in
-	self.SPEED_ANOMALY_THRESHOLD = 250 -- Speed threshold to trigger pathing reset
+	self.MAX_DRIFT_DISTANCE = 5.0 
+	self.SPEED_ANOMALY_THRESHOLD = 250 
 
 	-- Active Target & Static Post Tracking
 	self.CurrentEnemy = nil :: BasePart?
@@ -294,7 +294,7 @@ function PathfindingModule:StartHoverTargeting()
 	self.State.Navigating = true
 	self.MoveState.done = false
 
-	print("[DEBUG] Started Hover Targeting")
+	print("[DEBUG] Started Targeting")
 
 	self.MoveConnection = RunService.Heartbeat:Connect(function(dt)
 		if not self.State.Navigating or not root or not char then return end
@@ -313,7 +313,7 @@ function PathfindingModule:StartHoverTargeting()
 			local enemyPos = enemyRoot.Position
 			local now = tick()
 
-			-- Check 2: Position Lock & Anti-Drift Physics Adjustment
+			-- Check 2: Locked Post & Anti-Drift Check
 			if self.LockPosition then
 				local postDelta = self.LockPosition - currentPos
 				local distToLock = postDelta.Magnitude
@@ -328,20 +328,15 @@ function PathfindingModule:StartHoverTargeting()
 					))
 				end
 
-				-- Smooth physics pull-back if drifting outside safety tolerance
+				-- Anti-drift pull-back
 				if distToLock > self.MAX_DRIFT_DISTANCE then
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
 					end
 
-					if isBoss then
-						faceTarget(root, enemyPos)
-					else
-						faceDownward(root)
-					end
+					faceTarget(root, enemyPos)
 
-					-- Apply smooth pull-back velocity towards post (scaled by distance)
 					local correctionSpeed = math.clamp(self.MAX_SPEED * (distToLock / 5), self.MAX_SPEED, self.MAX_SPEED * 2)
 					local pullVelocity = postDelta.Unit * correctionSpeed
 					root.AssemblyLinearVelocity = pullVelocity
@@ -349,22 +344,18 @@ function PathfindingModule:StartHoverTargeting()
 					return
 				end
 
-				-- When close enough, stabilize and anchor smoothly at post
+				-- Reached Post: Anchor on ground facing boss
 				if distToLock <= 3.5 then
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
 					
-					if isBoss then
-						faceTarget(root, enemyPos)
-						root.CFrame = CFrame.new(self.LockPosition) * (root.CFrame - root.CFrame.Position)
-					else
-						root.CFrame = CFrame.new(self.LockPosition) * CFrame.Angles(-math.rad(90), 0, 0)
-					end
+					faceTarget(root, enemyPos)
+					root.CFrame = CFrame.new(self.LockPosition) * (root.CFrame - root.CFrame.Position)
 
 					if not root.Anchored then
 						root.Anchored = true
 						self.IsAnchoredAtPost = true
-						print("[DEBUG] ANCHORED AT POST SPOT ->", self.LockPosition)
+						print("[DEBUG] ANCHORED AT GROUND POST SPOT ->", self.LockPosition)
 					end
 				else
 					if root.Anchored then
@@ -372,29 +363,23 @@ function PathfindingModule:StartHoverTargeting()
 						self.IsAnchoredAtPost = false
 					end
 					
-					if isBoss then
-						faceTarget(root, enemyPos)
-					else
-						faceDownward(root)
-					end
-					
+					faceTarget(root, enemyPos)
 					local wishDir = postDelta.Unit
 					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
 				end
 				return
 			end
 
-			-- Pathfind on ground towards target position until within engage distance
+			-- Pathfind ground towards target
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- Within engagement range -> lock post position above target
+				-- Lock Ground Post at Boss initial spawn position
 				if isBoss then
-					local bossHoverPoint = enemyPos + Vector3.new(0, self.HOVER_HEIGHT, 0)
-					self.LockPosition = bossHoverPoint
-					print("[DEBUG] BOSS ROOM REACHED -> LOCKED INITIAL POST AT:", bossHoverPoint)
+					self.LockPosition = enemyPos -- Direct ground position of boss
+					print("[DEBUG] BOSS ROOM REACHED -> LOCKED GROUND POST AT:", enemyPos)
 				else
 					local playerToEnemy = (enemyPos - currentPos)
 					local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
