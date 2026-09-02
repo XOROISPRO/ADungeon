@@ -5,7 +5,6 @@ AbilityModule.__index = AbilityModule
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local VirtualInputManager = game:GetService("VirtualInputManager")
-local VirtualUser = game:GetService("VirtualUser")
 
 function AbilityModule.Init(State: any, Toggles: any, Options: any)
 	local self = setmetatable({}, AbilityModule)
@@ -24,20 +23,27 @@ function AbilityModule.Init(State: any, Toggles: any, Options: any)
 	return self
 end
 
--- Universal key press simulator (Solara compatible)
+-- Map Roblox KeyCodes to Virtual Key Codes (VK Codes) for Executor keypress functions
+local VK_CODES = {
+	[Enum.KeyCode.Q] = 0x51,
+	[Enum.KeyCode.E] = 0x45,
+}
+
+-- Key press simulator supporting Solara & VirtualInputManager
 local function pressKey(keyCode: Enum.KeyCode)
 	pcall(function()
-		-- 1. Try Executor Native KeyPress functions (Most reliable on Solara)
+		-- 1. Try Executor Native keypress/keyrelease using Virtual Key Codes
 		if typeof(keypress) == "function" and typeof(keyrelease) == "function" then
-			keypress(keyCode.Value)
-			task.wait(0.05)
-			keyrelease(keyCode.Value)
+			local vkCode = VK_CODES[keyCode] or keyCode.Value
+			keypress(vkCode)
+			task.wait(0.03)
+			keyrelease(vkCode)
 			return
 		end
 
-		-- 2. VirtualInputManager Fallback
+		-- 2. Fallback: VirtualInputManager
 		VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-		task.wait(0.05)
+		task.wait(0.03)
 		VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
 	end)
 end
@@ -123,6 +129,7 @@ function AbilityModule:Start()
 		self.SpamThread = task.spawn(function()
 			while self.Running and self.Mode == "Spam" do
 				pressKey(Enum.KeyCode.Q)
+				task.wait(0.02)
 				pressKey(Enum.KeyCode.E)
 				task.wait(self.SpamInterval)
 			end
