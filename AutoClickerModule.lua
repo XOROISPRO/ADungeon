@@ -18,19 +18,16 @@ function AutoClickerModule.Init(State: any, Toggles: any)
 	return self
 end
 
--- Searches character for any equipped tool containing a "swing" RemoteEvent
-local function fireWeaponSwingEvent(player: Player)
+-- Searches character descendants directly for any RemoteEvent named "swing"
+local function fireSwingEvent(player: Player)
 	local char = player.Character or Workspace:FindFirstChild(player.Name)
 	if not char then return end
 
-	for _, child in ipairs(char:GetChildren()) do
-		if child:IsA("Tool") then
-			local swingEvent = child:FindFirstChild("swing", true)
-			if swingEvent and swingEvent:IsA("RemoteEvent") then
-				pcall(function()
-					swingEvent:FireServer()
-				end)
-			end
+	for _, descendant in ipairs(char:GetDescendants()) do
+		if descendant:IsA("RemoteEvent") and descendant.Name == "swing" then
+			pcall(function()
+				descendant:FireServer()
+			end)
 		end
 	end
 end
@@ -41,7 +38,7 @@ function AutoClickerModule:Start()
 
 	self.ClickThread = task.spawn(function()
 		while self.Running do
-			fireWeaponSwingEvent(self.Player)
+			fireSwingEvent(self.Player)
 			task.wait(self.Interval)
 		end
 	end)
