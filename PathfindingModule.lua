@@ -368,6 +368,7 @@ function PathfindingModule:StartHoverTargeting()
 					))
 				end
 
+				-- Anti-drift pull-back
 				if distToLock > self.MAX_DRIFT_DISTANCE then
 					if root.Anchored then
 						root.Anchored = false
@@ -385,6 +386,7 @@ function PathfindingModule:StartHoverTargeting()
 					return
 				end
 
+				-- Snapping & Anchoring upon arrival
 				if distToLock <= 3.5 then
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
@@ -411,20 +413,25 @@ function PathfindingModule:StartHoverTargeting()
 						faceDownward(root)
 					end
 					local wishDir = postDelta.Unit
-					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
+					-- Maintain ground level for Boss Y velocity
+					local targetYVel = isBoss and 0 or (wishDir.Y * self.MAX_SPEED)
+					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, targetYVel)
 				end
 				return
 			end
 
+			-- Pathing towards target
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
 				if isBoss then
-					self.LockPosition = enemyPos
-					print("[DEBUG] BOSS ROOM REACHED -> LOCKED GROUND POST AT:", enemyPos)
+					-- Lock onto exact boss position (ground level Y value)
+					self.LockPosition = Vector3.new(enemyPos.X, enemyPos.Y, enemyPos.Z)
+					print("[DEBUG] BOSS GROUND POSITION REACHED -> LOCKED POST AT:", self.LockPosition)
 				else
+					-- Normal Hover mode calculation (adds HOVER_HEIGHT)
 					local playerToEnemy = (enemyPos - currentPos)
 					local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
 					local targetHoverPoint = enemyPos
