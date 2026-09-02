@@ -20,6 +20,7 @@ function ReplayModule.Init(State: any, Toggles: any)
 	
 	self.IsReplaying = false
 	self.LastReplayAttempt = 0
+	self.BossEngaged = false -- Tracks if we ever saw the boss alive
 
 	return self
 end
@@ -62,8 +63,44 @@ function ReplayModule:SetupDeathListener(character: Model)
 	end
 end
 
+-- Checks if the boss room has been cleared
+function ReplayModule:CheckBossDefeated(): boolean
+	local dungeon = Workspace:FindFirstChild("dungeon")
+	if not dungeon then return false end
+
+	local bossRoom = dungeon:FindFirstChild("bossRoom")
+	if not bossRoom then return false end
+
+	local enemyFolder = bossRoom:FindFirstChild("enemyFolder")
+	if not enemyFolder then return false end
+
+	local bossFound = false
+	local bossAlive = false
+
+	for _, child in pairs(enemyFolder:GetChildren()) do
+		if child:IsA("Model") then
+			bossFound = true
+			local hum = child:FindFirstChildOfClass("Humanoid")
+			if hum and hum.Health > 0 then
+				bossAlive = true
+				break
+			end
+		end
+	end
+
+	-- Flag that we've seen a living boss so we don't trigger immediately on dungeon load
+	if bossAlive then
+		self.BossEngaged = true
+		return false
+	end
+
+	-- Defeated if we engaged the boss and it is now dead/removed
+	return self.BossEngaged and not bossAlive
+end
+
 function ReplayModule:Start()
 	self:Stop()
+	self.BossEngaged = false
 
 	-- Bind to current and future characters for death monitoring
 	if self.Player.Character then
@@ -74,19 +111,25 @@ function ReplayModule:Start()
 		self:SetupDeathListener(newChar)
 	end)
 
-	-- Monitor Timer GUI
+	-- Main Monitor Loop (Timer + Boss Victory)
 	self.MonitorConnection = RunService.Heartbeat:Connect(function()
+		-- 1. Check Timer GUI (00:00)
 		local playerGui = self.Player:FindFirstChild("PlayerGui")
-		if not playerGui then return end
+		if playerGui then
+			local timeLeftGui = playerGui:FindFirstChild("timeLeftGui")
+			local frame = timeLeftGui and timeLeftGui:FindFirstChild("Frame")
+			local timeLabel = frame and frame:FindFirstChild("time") :: TextLabel?
 
-		local timeLeftGui = playerGui:FindFirstChild("timeLeftGui")
-		if not timeLeftGui then return end
+			if timeLabel and timeLabel.Text == "00:00" then
+				print("[REPLAY MODULE] Time limit reached (00:00)! Replaying dungeon...")
+				self:FireReplay()
+				return
+			end
+		end
 
-		local frame = timeLeftGui:FindFirstChild("Frame")
-		local timeLabel = frame and frame:FindFirstChild("time") :: TextLabel?
-
-		if timeLabel and timeLabel.Text == "00:00" then
-			print("[REPLAY MODULE] Time limit reached (00:00)! Replaying dungeon...")
+		-- 2. Check Boss Defeated
+		if self:CheckBossDefeated() then
+			print("[REPLAY MODULE] Boss defeated! Replaying dungeon...")
 			self:FireReplay()
 		end
 	end)
@@ -106,6 +149,7 @@ function ReplayModule:Stop()
 	end
 
 	self.IsReplaying = false
+	self.BossEngaged = false
 	print("[REPLAY MODULE] Stopped Replay Monitor.")
 end
 
