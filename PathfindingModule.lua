@@ -25,6 +25,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.ENGAGE_DISTANCE = 15
 	self.OFFSET_DISTANCE = 3
 	self.POST_MODE = true
+	self.BOSS_MODE = false
 
 	-- Active Target & Static Post Tracking
 	self.CurrentEnemy = nil :: BasePart?
@@ -112,8 +113,49 @@ function PathfindingModule:SetPostMode(enabled: boolean)
 	print("[DEBUG] POST_MODE Toggled ->", self.POST_MODE)
 end
 
--- Target Validation: Holds old enemy until dead
+function PathfindingModule:SetBossMode(enabled: boolean)
+	self.BOSS_MODE = enabled
+	self.LockPosition = nil
+	self.CurrentEnemy = nil
+	local char = self.Player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if root and root.Anchored then
+		root.Anchored = false
+		self.IsAnchoredAtPost = false
+	end
+	print("[DEBUG] BOSS_MODE Toggled ->", self.BOSS_MODE)
+end
+
+-- Dynamic Boss Target Locator: grabs whatever enemy model is inside bossRoom.enemyFolder
+function PathfindingModule:GetBossEnemy(): BasePart?
+	local dungeon = Workspace:FindFirstChild("dungeon")
+	if not dungeon then return nil end
+
+	local bossRoom = dungeon:FindFirstChild("bossRoom")
+	if not bossRoom then return nil end
+
+	local enemyFolder = bossRoom:FindFirstChild("enemyFolder")
+	if not enemyFolder then return nil end
+
+	for _, child in pairs(enemyFolder:GetChildren()) do
+		if child:IsA("Model") then
+			local bossHum = child:FindFirstChildOfClass("Humanoid")
+			local bossRoot = child:FindFirstChild("HumanoidRootPart") :: BasePart?
+			if bossRoot and bossHum and bossHum.Health > 0 then
+				return bossRoot
+			end
+		end
+	end
+
+	return nil
+end
+
+-- Target Validation
 function PathfindingModule:GetClosestEnemy(): BasePart?
+	if self.BOSS_MODE then
+		return self:GetBossEnemy()
+	end
+
 	local char = self.Player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then return nil end
@@ -172,6 +214,11 @@ end
 local function faceDownward(root: BasePart)
 	local currentPos = root.Position
 	root.CFrame = CFrame.new(currentPos) * CFrame.Angles(-math.rad(90), 0, 0)
+end
+
+local function faceTarget(root: BasePart, targetPos: Vector3)
+	local currentPos = root.Position
+	root.CFrame = CFrame.lookAt(currentPos, Vector3.new(targetPos.X, currentPos.Y, targetPos.Z))
 end
 
 -- Ground Pathfinding
@@ -243,7 +290,56 @@ function PathfindingModule:StartHoverTargeting()
 			local enemyPos = enemyRoot.Position
 			local now = tick()
 
-			-- 1. IF LOCKED ON A STATIC POST
+			-- ==========================================
+			-- BOSS MODE LOGIC
+			-- ==========================================
+			if self.BOSS_MODE then
+				-- Capture initial boss position as post location if not already locked
+				if not self.LockPosition then
+					self.LockPosition = enemyPos
+					print("[DEBUG] BOSS MODE LOCKED INITIAL POST AT ->", enemyPos, "| Boss Name:", enemyRoot.Parent and enemyRoot.Parent.Name or "Unknown")
+				end
+
+				local postDelta = self.LockPosition - currentPos
+				local distToLock = postDelta.Magnitude
+
+				if (now - self.LastDebugPrint) > 0.5 then
+					self.LastDebugPrint = now
+					print(string.format("[BOSS MODE ACTIVE] DistToLock: %.2f | Anchored: %s | RootPos: (%.1f, %.1f, %.1f)", 
+						distToLock, 
+						tostring(root.Anchored),
+						currentPos.X, currentPos.Y, currentPos.Z
+					))
+				end
+
+				if distToLock <= 3.5 then
+					self.MoveState.velocity = Vector3.zero
+					root.AssemblyLinearVelocity = Vector3.zero
+					
+					-- Orient horizontally facing the boss without tilting down
+					faceTarget(root, enemyPos)
+					root.CFrame = CFrame.new(self.LockPosition) * (root.CFrame - root.CFrame.Position)
+					
+					if not root.Anchored then
+						root.Anchored = true
+						self.IsAnchoredAtPost = true
+						print("[DEBUG] BOSS MODE -> ANCHORED AT INITIAL BOSS POST:", self.LockPosition)
+					end
+				else
+					if root.Anchored then
+						root.Anchored = false
+						self.IsAnchoredAtPost = false
+					end
+					faceTarget(root, enemyPos)
+					local wishDir = postDelta.Unit
+					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
+				end
+				return
+			end
+
+			-- ==========================================
+			-- STANDARD ENEMY / POST MODE LOGIC
+			-- ==========================================
 			if self.LockPosition then
 				local postDelta = self.LockPosition - currentPos
 				local distToLock = postDelta.Magnitude
@@ -257,7 +353,6 @@ function PathfindingModule:StartHoverTargeting()
 					))
 				end
 
-				-- Direct snap if close or overshot to avoid fling/drift
 				if distToLock <= 3.5 then
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
@@ -279,13 +374,13 @@ function PathfindingModule:StartHoverTargeting()
 				return
 			end
 
-			-- 2. APPROACH ENEMY GROUND POSITION UNTIL ENGAGE DISTANCE
+			-- Approach enemy ground position until engage distance
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- 3. LOCK POST ON ENEMY HOVER POINT
+				-- Lock post on normal enemy hover point
 				local playerToEnemy = (enemyPos - currentPos)
 				local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
 
@@ -303,7 +398,6 @@ function PathfindingModule:StartHoverTargeting()
 					print("[DEBUG] POST LOCKED AT ->", hoverPos)
 				end
 
-				-- Snap directly into anchor when close
 				local offsetDelta = hoverPos - currentPos
 				if offsetDelta.Magnitude <= 3.5 then
 					self.MoveState.velocity = Vector3.zero
