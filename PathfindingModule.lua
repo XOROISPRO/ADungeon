@@ -39,6 +39,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	}
 
 	self.MoveConnection = nil :: RBXScriptConnection?
+	self.LastDebugPrint = 0
 
 	return self
 end
@@ -114,7 +115,7 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 
 	-- Target dead/lost -> Clear target and release locked position
 	if self.CurrentEnemy then
-		print("[DEBUG] Target died or lost. Clearing current target and post lock.")
+		print("[DEBUG] Target died/lost. Clearing current target & post lock.")
 	end
 	self.CurrentEnemy = nil
 	self.LockPosition = nil
@@ -224,16 +225,30 @@ function PathfindingModule:StartHoverTargeting()
 		if enemyRoot then
 			local currentPos = root.Position
 			local enemyPos = enemyRoot.Position
+			local now = tick()
 
-			-- 1. IF LOCKED ON A STATIC POST: Direct velocity towards LockPosition and keep orientation downward
+			-- 1. IF LOCKED ON A STATIC POST
 			if self.LockPosition then
 				faceDownward(root)
 
 				local postDelta = self.LockPosition - currentPos
-				if postDelta.Magnitude > 0.5 then
+				local distToLock = postDelta.Magnitude
+
+				-- Periodic diagnostic print every 0.5s
+				if (now - self.LastDebugPrint) > 0.5 then
+					self.LastDebugPrint = now
+					print(string.format("[POST ACTIVE] DistToLock: %.2f | Velocity: (%.1f, %.1f, %.1f) | RootPos: (%.1f, %.1f, %.1f)", 
+						distToLock, 
+						root.AssemblyLinearVelocity.X, root.AssemblyLinearVelocity.Y, root.AssemblyLinearVelocity.Z,
+						currentPos.X, currentPos.Y, currentPos.Z
+					))
+				end
+
+				if distToLock > 0.5 then
 					local wishDir = postDelta.Unit
 					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
 				else
+					-- Explicitly freeze physical motion
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
 				end
@@ -246,8 +261,7 @@ function PathfindingModule:StartHoverTargeting()
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- 3. FIRST TIME ENTERING ENGAGEMENT RANGE:
-				-- Compute static post (Offset distance back towards player + Hover Height)
+				-- 3. FIRST TIME ENTERING ENGAGEMENT RANGE
 				local playerToEnemy = (enemyPos - currentPos)
 				local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
 
@@ -260,12 +274,9 @@ function PathfindingModule:StartHoverTargeting()
 				local hoverPos = targetHoverPoint + Vector3.new(0, self.HOVER_HEIGHT, 0)
 				self.MoveState.waypoints = nil
 
-				-- Lock position so it never changes until enemy dies or target changes
 				if self.POST_MODE then
 					self.LockPosition = hoverPos
 					print("[DEBUG] POST LOCKED AT ->", hoverPos)
-				else
-					print("[DEBUG] ENGAGED TARGET (POST_MODE IS OFF) -> Moving to dynamic hover point")
 				end
 
 				faceDownward(root)
