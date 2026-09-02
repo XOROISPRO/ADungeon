@@ -27,11 +27,10 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.OFFSET_DISTANCE = 3
 	self.POST_MODE = true
 
-	-- Active Target & Lock Tracking
+	-- Active Target & Static Post Tracking
 	self.CurrentEnemy = nil :: BasePart?
 	self.LockPosition = nil :: Vector3?
 
-	-- Movement State Vector Tracker
 	self.MoveState = {
 		velocity = Vector3.new(),
 		waypoints = nil :: {PathWaypoint}?,
@@ -126,6 +125,7 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 		end
 	end
 
+	-- Target died or lost: clear lock point
 	self.CurrentEnemy = nil
 	self.LockPosition = nil
 
@@ -157,7 +157,13 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 	return closestEnemyPart
 end
 
--- Ground Pathfinding Helper
+-- Downward Facing Helper
+local function faceTargetDownward(root: BasePart, targetPos: Vector3)
+	local lookDirection = (targetPos - root.Position).Unit
+	root.CFrame = CFrame.lookAt(root.Position, root.Position + lookDirection)
+end
+
+-- Pathfinding
 function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3): Vector3
 	local state = self.MoveState
 	local currentTime = tick()
@@ -204,12 +210,6 @@ function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3):
 	return directDelta.Magnitude > 0.1 and directDelta.Unit or Vector3.zero
 end
 
--- Rotates character downward directly facing enemy
-local function faceTargetDownward(root: BasePart, targetPos: Vector3)
-	local lookDirection = (targetPos - root.Position).Unit
-	root.CFrame = CFrame.lookAt(root.Position, root.Position + lookDirection)
-end
-
 -- Execution Loop
 function PathfindingModule:StartHoverTargeting()
 	self:StopPathfinding()
@@ -228,13 +228,11 @@ function PathfindingModule:StartHoverTargeting()
 		if enemyRoot then
 			local currentPos = root.Position
 			local enemyPos = enemyRoot.Position
-			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
-			local flatDistance = flatDelta.Magnitude
 
-			-- Continuously keep downward facing towards enemy
+			-- Continuously face enemy downward regardless of static position
 			faceTargetDownward(root, enemyPos)
 
-			-- Static Post Mode Behavior
+			-- 1. IF POST MODE IS ACTIVE & LOCKED: HOLD STATIC POSITION
 			if self.POST_MODE and self.LockPosition then
 				local postDelta = self.LockPosition - currentPos
 				if postDelta.Magnitude > 0.5 then
@@ -247,12 +245,13 @@ function PathfindingModule:StartHoverTargeting()
 				return
 			end
 
-			if flatDistance > self.ENGAGE_DISTANCE then
-				-- Approach target ground position
+			-- 2. APPROACH ENEMY GROUND POSITION
+			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
+			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- Set hover post position (shifted offset back towards player)
+				-- 3. ENGAGED: CALCULATE HOVER POINT
 				local playerToEnemy = (enemyPos - currentPos)
 				local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
 
@@ -263,9 +262,9 @@ function PathfindingModule:StartHoverTargeting()
 				end
 
 				local hoverPos = targetHoverPoint + Vector3.new(0, self.HOVER_HEIGHT, 0)
-
 				self.MoveState.waypoints = nil
 
+				-- Lock position once in Post Mode so it doesn't move with the target
 				if self.POST_MODE then
 					self.LockPosition = hoverPos
 				end
