@@ -28,7 +28,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.BOSS_MODE = false
 
 	-- Drift & Speed Anomaly Thresholds
-	self.MAX_DRIFT_DISTANCE = 8.0 -- Distance threshold before snapping back to post
+	self.MAX_DRIFT_DISTANCE = 5.0 -- Distance threshold before smooth correction kicks in
 	self.SPEED_ANOMALY_THRESHOLD = 250 -- Speed threshold to trigger pathing reset
 
 	-- Active Target & Static Post Tracking
@@ -277,9 +277,8 @@ function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3):
 	return directDelta.Magnitude > 0.1 and directDelta.Unit or Vector3.zero
 end
 
--- Simulates toggling navigation off and on to reset physics and pathing state
 function PathfindingModule:RestartPathing()
-	print("[WARNING] Speed anomaly / drift issue detected! Resetting pathing...")
+	print("[WARNING] Speed anomaly detected! Resetting pathing...")
 	self:StopPathfinding()
 	task.wait(0.05)
 	self:StartHoverTargeting()
@@ -314,19 +313,10 @@ function PathfindingModule:StartHoverTargeting()
 			local enemyPos = enemyRoot.Position
 			local now = tick()
 
-			-- Check 2: Position Lock & Drift Check
+			-- Check 2: Position Lock & Anti-Drift Physics Adjustment
 			if self.LockPosition then
 				local postDelta = self.LockPosition - currentPos
 				local distToLock = postDelta.Magnitude
-
-				-- Anti-Drift Check: Snap position back if drifting too far from post
-				if distToLock > self.MAX_DRIFT_DISTANCE then
-					print(string.format("[CORRECTION] Drifting from post (Dist: %.2f)! Forcing snap-back.", distToLock))
-					root.AssemblyLinearVelocity = Vector3.zero
-					self.MoveState.velocity = Vector3.zero
-					root.CFrame = CFrame.new(self.LockPosition) * (root.CFrame - root.CFrame.Position)
-					return
-				end
 
 				if (now - self.LastDebugPrint) > 0.5 then
 					self.LastDebugPrint = now
@@ -338,6 +328,28 @@ function PathfindingModule:StartHoverTargeting()
 					))
 				end
 
+				-- Smooth physics pull-back if drifting outside safety tolerance
+				if distToLock > self.MAX_DRIFT_DISTANCE then
+					if root.Anchored then
+						root.Anchored = false
+						self.IsAnchoredAtPost = false
+					end
+
+					if isBoss then
+						faceTarget(root, enemyPos)
+					else
+						faceDownward(root)
+					end
+
+					-- Apply smooth pull-back velocity towards post (scaled by distance)
+					local correctionSpeed = math.clamp(self.MAX_SPEED * (distToLock / 5), self.MAX_SPEED, self.MAX_SPEED * 2)
+					local pullVelocity = postDelta.Unit * correctionSpeed
+					root.AssemblyLinearVelocity = pullVelocity
+					self.MoveState.velocity = Vector3.new(pullVelocity.X, 0, pullVelocity.Z)
+					return
+				end
+
+				-- When close enough, stabilize and anchor smoothly at post
 				if distToLock <= 3.5 then
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
