@@ -15,11 +15,9 @@ function AbilityModule.Init(State: any, Toggles: any, Options: any)
 	self.Options = Options
 	self.Player = Players.LocalPlayer
 	self.Running = false
-
 	self.QThread = nil :: thread?
 	self.EThread = nil :: thread?
 	self.SpamThread = nil :: thread?
-
 	self.Mode = "Cycle"
 	self.SpamInterval = 0.1
 
@@ -96,7 +94,7 @@ function AbilityModule:GetCooldown(abilityType: "Q" | "E"): number
 	return 0.0
 end
 
--- Independent Ability Loop
+-- Independent Ability Loop (Cycle Mode)
 function AbilityModule:RunIndependentAbility(key: Enum.KeyCode, abilityType: "Q" | "E")
 	while self.Running and self.Mode == "Cycle" do
 		if self:GetCooldown(abilityType) <= 0 then
@@ -118,21 +116,14 @@ function AbilityModule:Start()
 		self.QThread = task.spawn(function()
 			self:RunIndependentAbility(Enum.KeyCode.Q, "Q")
 		end)
-
 		self.EThread = task.spawn(function()
 			self:RunIndependentAbility(Enum.KeyCode.E, "E")
 		end)
 	elseif self.Mode == "Spam" then
 		self.SpamThread = task.spawn(function()
 			while self.Running and self.Mode == "Spam" do
-				if not self:IsBusyCasting() then
-					if self:GetCooldown("Q") <= 0 then
-						pressKey(Enum.KeyCode.Q)
-					end
-					if self:GetCooldown("E") <= 0 then
-						pressKey(Enum.KeyCode.E)
-					end
-				end
+				pressKey(Enum.KeyCode.Q)
+				pressKey(Enum.KeyCode.E)
 				task.wait(self.SpamInterval)
 			end
 		end)
@@ -146,10 +137,12 @@ function AbilityModule:Stop()
 		task.cancel(self.QThread)
 		self.QThread = nil
 	end
+
 	if self.EThread then
 		task.cancel(self.EThread)
 		self.EThread = nil
 	end
+
 	if self.SpamThread then
 		task.cancel(self.SpamThread)
 		self.SpamThread = nil
