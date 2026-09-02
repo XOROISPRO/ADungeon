@@ -126,7 +126,7 @@ function PathfindingModule:SetBossMode(enabled: boolean)
 	print("[DEBUG] BOSS_MODE Toggled ->", self.BOSS_MODE)
 end
 
--- Dynamic Boss Target Locator: grabs whatever enemy model is inside bossRoom.enemyFolder
+-- Checks if there is a valid alive boss model inside bossRoom.enemyFolder
 function PathfindingModule:GetBossEnemy(): BasePart?
 	local dungeon = Workspace:FindFirstChild("dungeon")
 	if not dungeon then return nil end
@@ -150,21 +150,26 @@ function PathfindingModule:GetBossEnemy(): BasePart?
 	return nil
 end
 
--- Target Validation
-function PathfindingModule:GetClosestEnemy(): BasePart?
+-- Target Validation with Fallback to Normal Enemies
+function PathfindingModule:GetClosestEnemy(): (BasePart?, boolean)
+	-- If Boss Mode is toggled ON, check for boss room enemy first
 	if self.BOSS_MODE then
-		return self:GetBossEnemy()
+		local bossRoot = self:GetBossEnemy()
+		if bossRoot then
+			return bossRoot, true -- Target is Boss
+		end
 	end
 
+	-- Otherwise, standard target detection for normal dungeon enemies
 	local char = self.Player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not root then return nil end
+	if not root then return nil, false end
 
 	if self.CurrentEnemy and self.CurrentEnemy.Parent then
 		local parentModel = self.CurrentEnemy.Parent
 		local hum = parentModel:FindFirstChildOfClass("Humanoid")
 		if hum and hum.Health > 0 then
-			return self.CurrentEnemy
+			return self.CurrentEnemy, false
 		end
 	end
 
@@ -180,7 +185,7 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 	end
 
 	local dungeon = Workspace:FindFirstChild("dungeon")
-	if not dungeon then return nil end
+	if not dungeon then return nil, false end
 
 	local closestEnemyPart: BasePart? = nil
 	local shortestDistance = math.huge
@@ -208,7 +213,7 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 	end
 
 	self.CurrentEnemy = closestEnemyPart
-	return closestEnemyPart
+	return closestEnemyPart, false
 end
 
 local function faceDownward(root: BasePart)
@@ -284,20 +289,20 @@ function PathfindingModule:StartHoverTargeting()
 	self.MoveConnection = RunService.Heartbeat:Connect(function(dt)
 		if not self.State.Navigating or not root or not char then return end
 
-		local enemyRoot = self:GetClosestEnemy()
+		local enemyRoot, isBoss = self:GetClosestEnemy()
 		if enemyRoot then
 			local currentPos = root.Position
 			local enemyPos = enemyRoot.Position
 			local now = tick()
 
 			-- ==========================================
-			-- BOSS MODE LOGIC
+			-- BOSS ROOM SPECIFIC BEHAVIOR
 			-- ==========================================
-			if self.BOSS_MODE then
-				-- Capture initial boss position as post location if not already locked
+			if isBoss then
+				-- Capture initial boss position as static post location
 				if not self.LockPosition then
 					self.LockPosition = enemyPos
-					print("[DEBUG] BOSS MODE LOCKED INITIAL POST AT ->", enemyPos, "| Boss Name:", enemyRoot.Parent and enemyRoot.Parent.Name or "Unknown")
+					print("[DEBUG] BOSS ROOM REACHED -> LOCKED INITIAL POST AT:", enemyPos, "| Boss:", enemyRoot.Parent and enemyRoot.Parent.Name or "Unknown")
 				end
 
 				local postDelta = self.LockPosition - currentPos
@@ -316,7 +321,7 @@ function PathfindingModule:StartHoverTargeting()
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
 					
-					-- Orient horizontally facing the boss without tilting down
+					-- Keep character horizontal and facing directly at boss
 					faceTarget(root, enemyPos)
 					root.CFrame = CFrame.new(self.LockPosition) * (root.CFrame - root.CFrame.Position)
 					
