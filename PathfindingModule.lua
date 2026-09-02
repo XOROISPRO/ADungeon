@@ -94,6 +94,7 @@ function PathfindingModule:SetPostMode(enabled: boolean)
 	if not enabled then
 		self.LockPosition = nil
 	end
+	print("[DEBUG] POST_MODE Toggled ->", self.POST_MODE)
 end
 
 -- Target Validation: Holds old enemy until dead
@@ -112,6 +113,9 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 	end
 
 	-- Target dead/lost -> Clear target and release locked position
+	if self.CurrentEnemy then
+		print("[DEBUG] Target died or lost. Clearing current target and post lock.")
+	end
 	self.CurrentEnemy = nil
 	self.LockPosition = nil
 
@@ -137,6 +141,10 @@ function PathfindingModule:GetClosestEnemy(): BasePart?
 				end
 			end
 		end
+	end
+
+	if closestEnemyPart and closestEnemyPart ~= self.CurrentEnemy then
+		print("[DEBUG] New Enemy Found ->", closestEnemyPart.Parent and closestEnemyPart.Parent.Name or "Unknown")
 	end
 
 	self.CurrentEnemy = closestEnemyPart
@@ -207,6 +215,8 @@ function PathfindingModule:StartHoverTargeting()
 	self.State.Navigating = true
 	self.MoveState.done = false
 
+	print("[DEBUG] Started Hover Targeting")
+
 	self.MoveConnection = RunService.Heartbeat:Connect(function(dt)
 		if not self.State.Navigating or not root or not char then return end
 
@@ -253,6 +263,9 @@ function PathfindingModule:StartHoverTargeting()
 				-- Lock position so it never changes until enemy dies or target changes
 				if self.POST_MODE then
 					self.LockPosition = hoverPos
+					print("[DEBUG] POST LOCKED AT ->", hoverPos)
+				else
+					print("[DEBUG] ENGAGED TARGET (POST_MODE IS OFF) -> Moving to dynamic hover point")
 				end
 
 				faceDownward(root)
@@ -279,6 +292,8 @@ function PathfindingModule:StopPathfinding()
 	if self.State then
 		self.State.Navigating = false
 	end
+
+	print("[DEBUG] Stopped Pathfinding")
 
 	self.CurrentEnemy = nil
 	self.LockPosition = nil
