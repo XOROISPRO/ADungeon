@@ -9,7 +9,6 @@ local PathfindingService = game:GetService("PathfindingService")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
-
 	self.State = State
 	self.Toggles = Toggles
 	self.Player = Players.LocalPlayer
@@ -28,8 +27,8 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.BOSS_MODE = false
 
 	-- Drift & Speed Anomaly Thresholds
-	self.MAX_DRIFT_DISTANCE = 5.0 
-	self.SPEED_ANOMALY_THRESHOLD = 250 
+	self.MAX_DRIFT_DISTANCE = 5.0
+	self.SPEED_ANOMALY_THRESHOLD = 250
 
 	-- Active Target & Static Post Tracking
 	self.CurrentEnemy = nil :: BasePart?
@@ -63,6 +62,7 @@ end
 local function applyFriction(velocity: Vector3, isGrounded: boolean, friction: number, stopSpeed: number, dt: number): Vector3
 	local speed = velocity.Magnitude
 	if speed < 0.1 then return Vector3.new() end
+
 	local drop = isGrounded and (math.max(speed, stopSpeed) * friction * dt) or 0
 	local newSpeed = math.max(speed - drop, 0)
 	return (newSpeed ~= speed) and (velocity * (newSpeed / speed)) or velocity
@@ -87,20 +87,35 @@ function PathfindingModule:StepMovement(root: BasePart, character: Model, wishDi
 
 	self.MoveState.velocity = applyFriction(self.MoveState.velocity, isGrounded, self.FRICTION, self.STOP_SPEED, dt)
 	self.MoveState.velocity = accel(self.MoveState.velocity, wishDir, activeMaxSpeed, currentAccel, dt)
-	
+
 	local clampedY = math.clamp(targetYVelocity, -self.MAX_AIR_VELOCITY, self.MAX_AIR_VELOCITY)
+
 	root.AssemblyLinearVelocity = Vector3.new(
-		self.MoveState.velocity.X, 
-		clampedY, 
+		self.MoveState.velocity.X,
+		clampedY,
 		self.MoveState.velocity.Z
 	)
 end
 
-function PathfindingModule:SetHoverHeight(height: number) self.HOVER_HEIGHT = height end
-function PathfindingModule:SetWalkSpeed(speed: number) self.MAX_SPEED = speed end
-function PathfindingModule:SetAirVelocity(maxAirVel: number) self.MAX_AIR_VELOCITY = maxAirVel end
-function PathfindingModule:SetAirAccel(airAccel: number) self.AIR_ACCEL = airAccel end
-function PathfindingModule:SetOffsetDistance(offset: number) self.OFFSET_DISTANCE = offset end
+function PathfindingModule:SetHoverHeight(height: number)
+	self.HOVER_HEIGHT = height
+end
+
+function PathfindingModule:SetWalkSpeed(speed: number)
+	self.MAX_SPEED = speed
+end
+
+function PathfindingModule:SetAirVelocity(maxAirVel: number)
+	self.MAX_AIR_VELOCITY = maxAirVel
+end
+
+function PathfindingModule:SetAirAccel(airAccel: number)
+	self.AIR_ACCEL = airAccel
+end
+
+function PathfindingModule:SetOffsetDistance(offset: number)
+	self.OFFSET_DISTANCE = offset
+end
 
 function PathfindingModule:SetPostMode(enabled: boolean)
 	self.POST_MODE = enabled
@@ -130,7 +145,17 @@ function PathfindingModule:SetBossMode(enabled: boolean)
 	print("[DEBUG] BOSS_MODE Toggled ->", self.BOSS_MODE)
 end
 
--- Checks if player's RootPart is physically inside the bossRoom bounds
+-- Check if target is directly inside workspace.dungeon.bossRoom.enemyFolder
+function PathfindingModule:IsBossEnemy(target: BasePart?): boolean
+	if not target or not target.Parent then return false end
+
+	local dungeon = Workspace:FindFirstChild("dungeon")
+	local bossRoom = dungeon and dungeon:FindFirstChild("bossRoom")
+	local enemyFolder = bossRoom and bossRoom:FindFirstChild("enemyFolder")
+
+	return enemyFolder ~= nil and target.Parent == enemyFolder
+end
+
 function PathfindingModule:IsInBossRoom(root: BasePart): boolean
 	local dungeon = Workspace:FindFirstChild("dungeon")
 	if not dungeon then return false end
@@ -138,10 +163,8 @@ function PathfindingModule:IsInBossRoom(root: BasePart): boolean
 	local bossRoom = dungeon:FindFirstChild("bossRoom")
 	if not bossRoom then return false end
 
-	-- Bounds check via model bounding box or direct distance to room center
-	local roomCFrame, roomSize
 	if bossRoom:IsA("Model") then
-		roomCFrame, roomSize = bossRoom:GetBoundingBox()
+		local roomCFrame, roomSize = bossRoom:GetBoundingBox()
 		local localPos = roomCFrame:PointToObjectSpace(root.Position)
 		local halfSize = roomSize * 0.5
 		return math.abs(localPos.X) <= halfSize.X and math.abs(localPos.Z) <= halfSize.Z
@@ -169,7 +192,6 @@ function PathfindingModule:GetBossEnemy(): BasePart?
 			end
 		end
 	end
-
 	return nil
 end
 
@@ -178,7 +200,6 @@ function PathfindingModule:GetClosestEnemy(): (BasePart?, boolean)
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then return nil, false end
 
-	-- Only activate boss mode when player is inside the boss room
 	local inBossRoom = self:IsInBossRoom(root)
 	if self.BOSS_MODE and inBossRoom then
 		local bossRoot = self:GetBossEnemy()
@@ -191,21 +212,22 @@ function PathfindingModule:GetClosestEnemy(): (BasePart?, boolean)
 		end
 	end
 
+	-- Check existing target validity
 	if self.CurrentEnemy and self.CurrentEnemy.Parent then
 		local parentModel = self.CurrentEnemy.Parent
 		local hum = parentModel:FindFirstChildOfClass("Humanoid")
 		if hum and hum.Health > 0 then
-			return self.CurrentEnemy, false
+			local isBoss = self:IsBossEnemy(self.CurrentEnemy)
+			return self.CurrentEnemy, isBoss
 		end
 	end
 
 	if self.CurrentEnemy then
 		print("[DEBUG] Target died/lost. Clearing target & unanchoring.")
 	end
-	
+
 	self.CurrentEnemy = nil
 	self.LockPosition = nil
-	
 	if root.Anchored then
 		root.Anchored = false
 		self.IsAnchoredAtPost = false
@@ -223,7 +245,6 @@ function PathfindingModule:GetClosestEnemy(): (BasePart?, boolean)
 			for _, enemy in pairs(enemyFolder:GetChildren()) do
 				local enemyHum = enemy:FindFirstChildOfClass("Humanoid")
 				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart") :: BasePart?
-
 				if enemyRoot and enemyHum and enemyHum.Health > 0 then
 					local dist = (enemyRoot.Position - root.Position).Magnitude
 					if dist < shortestDistance then
@@ -240,7 +261,8 @@ function PathfindingModule:GetClosestEnemy(): (BasePart?, boolean)
 	end
 
 	self.CurrentEnemy = closestEnemyPart
-	return closestEnemyPart, false
+	local isBoss = self:IsBossEnemy(closestEnemyPart)
+	return closestEnemyPart, isBoss
 end
 
 local function faceDownward(root: BasePart)
@@ -264,7 +286,6 @@ function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3):
 			AgentHeight = 5,
 			AgentCanJump = true
 		})
-
 		local ok, _ = pcall(function()
 			path:ComputeAsync(root.Position, targetPos)
 		end)
@@ -315,13 +336,11 @@ function PathfindingModule:StartHoverTargeting()
 
 	self.State.Navigating = true
 	self.MoveState.done = false
-
 	print("[DEBUG] Started Targeting")
 
 	self.MoveConnection = RunService.Heartbeat:Connect(function(dt)
 		if not self.State.Navigating or not root or not char then return end
 
-		-- Speed Anomaly Reset Handler
 		local currentSpeed = root.AssemblyLinearVelocity.Magnitude
 		if currentSpeed > self.SPEED_ANOMALY_THRESHOLD then
 			print(string.format("[WARNING] Speed Anomaly Detected: %.2f studs/s! Triggering reset.", currentSpeed))
@@ -335,34 +354,30 @@ function PathfindingModule:StartHoverTargeting()
 			local enemyPos = enemyRoot.Position
 			local now = tick()
 
-			-- Position Lock & Anti-Drift Check
 			if self.LockPosition then
 				local postDelta = self.LockPosition - currentPos
 				local distToLock = postDelta.Magnitude
 
 				if (now - self.LastDebugPrint) > 0.5 then
 					self.LastDebugPrint = now
-					print(string.format("[%s ACTIVE] DistToLock: %.2f | Anchored: %s | RootPos: (%.1f, %.1f, %.1f)", 
+					print(string.format("[%s ACTIVE] DistToLock: %.2f | Anchored: %s | RootPos: (%.1f, %.1f, %.1f)",
 						isBoss and "BOSS MODE" or "POST",
-						distToLock, 
+						distToLock,
 						tostring(root.Anchored),
 						currentPos.X, currentPos.Y, currentPos.Z
 					))
 				end
 
-				-- Anti-drift pull-back
 				if distToLock > self.MAX_DRIFT_DISTANCE then
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
 					end
-
 					if isBoss then
 						faceTarget(root, enemyPos)
 					else
 						faceDownward(root)
 					end
-
 					local correctionSpeed = math.clamp(self.MAX_SPEED * (distToLock / 5), self.MAX_SPEED, self.MAX_SPEED * 2)
 					local pullVelocity = postDelta.Unit * correctionSpeed
 					root.AssemblyLinearVelocity = pullVelocity
@@ -370,11 +385,9 @@ function PathfindingModule:StartHoverTargeting()
 					return
 				end
 
-				-- Reached Post: Anchor smooth
 				if distToLock <= 3.5 then
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
-					
 					if isBoss then
 						faceTarget(root, enemyPos)
 						root.CFrame = CFrame.new(self.LockPosition) * (root.CFrame - root.CFrame.Position)
@@ -382,7 +395,6 @@ function PathfindingModule:StartHoverTargeting()
 						faceDownward(root)
 						root.CFrame = CFrame.new(self.LockPosition) * CFrame.Angles(-math.rad(90), 0, 0)
 					end
-
 					if not root.Anchored then
 						root.Anchored = true
 						self.IsAnchoredAtPost = true
@@ -393,26 +405,22 @@ function PathfindingModule:StartHoverTargeting()
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
 					end
-					
 					if isBoss then
 						faceTarget(root, enemyPos)
 					else
 						faceDownward(root)
 					end
-
 					local wishDir = postDelta.Unit
 					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
 				end
 				return
 			end
 
-			-- Pathfind ground towards target
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
-				-- Lock Ground Post at Boss initial spawn position once inside room
 				if isBoss then
 					self.LockPosition = enemyPos
 					print("[DEBUG] BOSS ROOM REACHED -> LOCKED GROUND POST AT:", enemyPos)
@@ -420,15 +428,12 @@ function PathfindingModule:StartHoverTargeting()
 					local playerToEnemy = (enemyPos - currentPos)
 					local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
 					local targetHoverPoint = enemyPos
-
 					if flatPlayerToEnemy.Magnitude > self.OFFSET_DISTANCE then
 						local approachDir = flatPlayerToEnemy.Unit
 						targetHoverPoint = enemyPos - (approachDir * self.OFFSET_DISTANCE)
 					end
-
 					local hoverPos = targetHoverPoint + Vector3.new(0, self.HOVER_HEIGHT, 0)
 					self.MoveState.waypoints = nil
-
 					if self.POST_MODE then
 						self.LockPosition = hoverPos
 						print("[DEBUG] POST LOCKED AT ->", hoverPos)
@@ -453,9 +458,7 @@ function PathfindingModule:StopPathfinding()
 	if self.State then
 		self.State.Navigating = false
 	end
-
 	print("[DEBUG] Stopped Pathfinding")
-
 	self.CurrentEnemy = nil
 	self.LockPosition = nil
 	self.MoveState.done = true
