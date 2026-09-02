@@ -244,13 +244,14 @@ function PathfindingModule:StartHoverTargeting()
 					))
 				end
 
-				if distToLock > 0.5 then
+				if distToLock > 1.5 then
 					local wishDir = postDelta.Unit
 					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
 				else
-					-- Explicitly freeze physical motion
+					-- Zero out velocity and snap CFrame to counteract gravity drift
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
+					root.CFrame = CFrame.new(self.LockPosition) * CFrame.Angles(-math.rad(90), 0, 0)
 				end
 				return
 			end
@@ -282,12 +283,13 @@ function PathfindingModule:StartHoverTargeting()
 				faceDownward(root)
 
 				local offsetDelta = hoverPos - currentPos
-				if offsetDelta.Magnitude > 0.5 then
+				if offsetDelta.Magnitude > 1.5 then
 					local wishDir = offsetDelta.Unit
 					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, wishDir.Y * self.MAX_SPEED)
 				else
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
+					root.CFrame = CFrame.new(hoverPos) * CFrame.Angles(-math.rad(90), 0, 0)
 				end
 			end
 		else
