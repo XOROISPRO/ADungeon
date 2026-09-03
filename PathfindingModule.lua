@@ -26,8 +26,13 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.POST_MODE = true
 	self.BOSS_MODE = false
 
-	-- Drift & Speed Anomaly Thresholds
-	self.MAX_DRIFT_DISTANCE = 5.0
+	-- Drift & Arrival Thresholds (Separated for Normal vs Boss)
+	self.MAX_DRIFT_DISTANCE_NORMAL = 5.0
+	self.MAX_DRIFT_DISTANCE_BOSS = 3.0
+	self.ARRIVAL_DISTANCE_NORMAL = 2
+	self.ARRIVAL_DISTANCE_BOSS = 1
+
+	-- Speed Anomaly Thresholds
 	self.SPEED_ANOMALY_THRESHOLD = 250
 
 	-- Active Target & Static Post Tracking
@@ -145,7 +150,6 @@ function PathfindingModule:SetBossMode(enabled: boolean)
 	print("[DEBUG] BOSS_MODE Toggled ->", self.BOSS_MODE)
 end
 
--- Check if target is directly inside workspace.dungeon.bossRoom.enemyFolder
 function PathfindingModule:IsBossEnemy(target: BasePart?): boolean
 	if not target or not target.Parent then return false end
 
@@ -212,7 +216,6 @@ function PathfindingModule:GetClosestEnemy(): (BasePart?, boolean)
 		end
 	end
 
-	-- Check existing target validity
 	if self.CurrentEnemy and self.CurrentEnemy.Parent then
 		local parentModel = self.CurrentEnemy.Parent
 		local hum = parentModel:FindFirstChildOfClass("Humanoid")
@@ -354,22 +357,26 @@ function PathfindingModule:StartHoverTargeting()
 			local enemyPos = enemyRoot.Position
 			local now = tick()
 
+			-- Select thresholds based on whether current target is a boss or normal enemy
+			local maxDriftDist = isBoss and self.MAX_DRIFT_DISTANCE_BOSS or self.MAX_DRIFT_DISTANCE_NORMAL
+			local arrivalDist = isBoss and self.ARRIVAL_DISTANCE_BOSS or self.ARRIVAL_DISTANCE_NORMAL
+
 			if self.LockPosition then
 				local postDelta = self.LockPosition - currentPos
 				local distToLock = postDelta.Magnitude
 
 				if (now - self.LastDebugPrint) > 0.5 then
 					self.LastDebugPrint = now
-					print(string.format("[%s ACTIVE] DistToLock: %.2f | Anchored: %s | RootPos: (%.1f, %.1f, %.1f)",
+					print(string.format("[%s ACTIVE] DistToLock: %.2f | TargetThreshold: %.1f | Anchored: %s",
 						isBoss and "BOSS MODE" or "POST",
 						distToLock,
-						tostring(root.Anchored),
-						currentPos.X, currentPos.Y, currentPos.Z
+						arrivalDist,
+						tostring(root.Anchored)
 					))
 				end
 
-				-- Anti-drift pull-back
-				if distToLock > self.MAX_DRIFT_DISTANCE then
+				-- Anti-drift pull-back check using dynamic maxDriftDist
+				if distToLock > maxDriftDist then
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
@@ -386,8 +393,8 @@ function PathfindingModule:StartHoverTargeting()
 					return
 				end
 
-				-- Snapping & Anchoring upon arrival
-				if distToLock <= 3.5 then
+				-- Snapping & Anchoring check using dynamic arrivalDist
+				if distToLock <= arrivalDist then
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
 					if isBoss then
@@ -413,25 +420,22 @@ function PathfindingModule:StartHoverTargeting()
 						faceDownward(root)
 					end
 					local wishDir = postDelta.Unit
-					-- Maintain ground level for Boss Y velocity
 					local targetYVel = isBoss and 0 or (wishDir.Y * self.MAX_SPEED)
 					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, targetYVel)
 				end
 				return
 			end
 
-			-- Pathing towards target
+			-- Initial Movement towards Target
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
 				if isBoss then
-					-- Lock onto exact boss position (ground level Y value)
 					self.LockPosition = Vector3.new(enemyPos.X, enemyPos.Y, enemyPos.Z)
 					print("[DEBUG] BOSS GROUND POSITION REACHED -> LOCKED POST AT:", self.LockPosition)
 				else
-					-- Normal Hover mode calculation (adds HOVER_HEIGHT)
 					local playerToEnemy = (enemyPos - currentPos)
 					local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
 					local targetHoverPoint = enemyPos
