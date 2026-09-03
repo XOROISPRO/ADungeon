@@ -1,5 +1,4 @@
 --!strict
-print("V1.1")
 local PathfindingModule = {}
 PathfindingModule.__index = PathfindingModule
 
@@ -27,11 +26,11 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.POST_MODE = true
 	self.BOSS_MODE = false
 
-	-- Drift & Arrival Thresholds (Separated for Normal vs Boss)
+	-- Drift & Arrival Thresholds
 	self.MAX_DRIFT_DISTANCE_NORMAL = 5.0
 	self.MAX_DRIFT_DISTANCE_BOSS = 3.0
-	self.ARRIVAL_DISTANCE_NORMAL = 2
-	self.ARRIVAL_DISTANCE_BOSS = 1
+	self.ARRIVAL_DISTANCE_NORMAL = 3.5
+	self.ARRIVAL_DISTANCE_BOSS = 2.0
 
 	-- Speed Anomaly Thresholds
 	self.SPEED_ANOMALY_THRESHOLD = 250
@@ -274,11 +273,6 @@ local function faceDownward(root: BasePart)
 	root.CFrame = CFrame.new(currentPos) * CFrame.Angles(-math.rad(90), 0, 0)
 end
 
-local function faceTarget(root: BasePart, targetPos: Vector3)
-	local currentPos = root.Position
-	root.CFrame = CFrame.lookAt(currentPos, Vector3.new(targetPos.X, currentPos.Y, targetPos.Z))
-end
-
 function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3): Vector3
 	local state = self.MoveState
 	local currentTime = tick()
@@ -358,33 +352,32 @@ function PathfindingModule:StartHoverTargeting()
 			local enemyPos = enemyRoot.Position
 			local now = tick()
 
-			-- Select thresholds based on whether current target is a boss or normal enemy
 			local maxDriftDist = isBoss and self.MAX_DRIFT_DISTANCE_BOSS or self.MAX_DRIFT_DISTANCE_NORMAL
 			local arrivalDist = isBoss and self.ARRIVAL_DISTANCE_BOSS or self.ARRIVAL_DISTANCE_NORMAL
 
 			if self.LockPosition then
+				-- Compare flat XZ distance if handling a boss so Y offset doesn't affect lock checks
 				local postDelta = self.LockPosition - currentPos
-				local distToLock = postDelta.Magnitude
+				local distToLock = isBoss 
+					and Vector3.new(postDelta.X, 0, postDelta.Z).Magnitude 
+					or postDelta.Magnitude
 
 				if (now - self.LastDebugPrint) > 0.5 then
 					self.LastDebugPrint = now
-					print(string.format("[%s ACTIVE] DistToLock: %.2f | TargetThreshold: %.1f | Anchored: %s",
+					print(string.format("[%s ACTIVE] DistToLock: %.2f | Anchored: %s",
 						isBoss and "BOSS MODE" or "POST",
 						distToLock,
-						arrivalDist,
 						tostring(root.Anchored)
 					))
 				end
 
-				-- Anti-drift pull-back check using dynamic maxDriftDist
+				-- Anti-drift pull-back
 				if distToLock > maxDriftDist then
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
 					end
-					if isBoss then
-						faceTarget(root, enemyPos)
-					else
+					if not isBoss then
 						faceDownward(root)
 					end
 					local correctionSpeed = math.clamp(self.MAX_SPEED * (distToLock / 5), self.MAX_SPEED, self.MAX_SPEED * 2)
@@ -394,30 +387,31 @@ function PathfindingModule:StartHoverTargeting()
 					return
 				end
 
-				-- Snapping & Anchoring check using dynamic arrivalDist
+				-- Snap & Anchor
 				if distToLock <= arrivalDist then
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
+
 					if isBoss then
-						faceTarget(root, enemyPos)
-						root.CFrame = CFrame.new(self.LockPosition) * (root.CFrame - root.CFrame.Position)
+						-- Snap to target X/Z, keeping player's existing Y height and orientation intact
+						local currentRotation = root.CFrame - root.CFrame.Position
+						root.CFrame = CFrame.new(self.LockPosition.X, currentPos.Y, self.LockPosition.Z) * currentRotation
 					else
 						faceDownward(root)
 						root.CFrame = CFrame.new(self.LockPosition) * CFrame.Angles(-math.rad(90), 0, 0)
 					end
+
 					if not root.Anchored then
 						root.Anchored = true
 						self.IsAnchoredAtPost = true
-						print("[DEBUG] ANCHORED AT POST SPOT ->", self.LockPosition)
+						print("[DEBUG] ANCHORED AT POST SPOT ->", root.Position)
 					end
 				else
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
 					end
-					if isBoss then
-						faceTarget(root, enemyPos)
-					else
+					if not isBoss then
 						faceDownward(root)
 					end
 					local wishDir = postDelta.Unit
@@ -427,15 +421,16 @@ function PathfindingModule:StartHoverTargeting()
 				return
 			end
 
-			-- Initial Movement towards Target
+			-- Pathing / Target approach
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
 				if isBoss then
-					self.LockPosition = Vector3.new(enemyPos.X, enemyPos.Y, enemyPos.Z)
-					print("[DEBUG] BOSS GROUND POSITION REACHED -> LOCKED POST AT:", self.LockPosition)
+					-- Lock to boss X and Z coordinates, using current player Y height
+					self.LockPosition = Vector3.new(enemyPos.X, currentPos.Y, enemyPos.Z)
+					print("[DEBUG] BOSS POSITION REACHED -> LOCKED POST (X/Z only) AT:", self.LockPosition)
 				else
 					local playerToEnemy = (enemyPos - currentPos)
 					local flatPlayerToEnemy = Vector3.new(playerToEnemy.X, 0, playerToEnemy.Z)
