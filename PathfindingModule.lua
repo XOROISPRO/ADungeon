@@ -1,4 +1,5 @@
 --!strict
+print("V1.1")
 local PathfindingModule = {}
 PathfindingModule.__index = PathfindingModule
 
