@@ -2,6 +2,7 @@
 local PathfindingModule = {}
 PathfindingModule.__index = PathfindingModule
 
+print("V1.1")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
