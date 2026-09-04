@@ -25,9 +25,9 @@ function PathfindingModule.Init(State: any, Toggles: any)
 
 	-- Drift & Arrival Thresholds
 	self.MAX_DRIFT_DISTANCE_NORMAL = 5.0
-	self.MAX_DRIFT_DISTANCE_BOSS = 3.0
-	self.ARRIVAL_DISTANCE_NORMAL = 3.5
-	self.ARRIVAL_DISTANCE_BOSS = 2.0
+	self.MAX_DRIFT_DISTANCE_BOSS = 3
+	self.ARRIVAL_DISTANCE_NORMAL = 1.25
+	self.ARRIVAL_DISTANCE_BOSS = 1
 
 	-- Speed Anomaly Thresholds
 	self.SPEED_ANOMALY_THRESHOLD = 250
