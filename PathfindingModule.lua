@@ -1,12 +1,13 @@
 --!strict
 local PathfindingModule = {}
 PathfindingModule.__index = PathfindingModule
+
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
-print("Version 2")
-
+local UserInputService = game:GetService("UserInputService")
+print("Version2")
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
 	self.State = State
@@ -15,8 +16,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 
 	-- Physics & Position Parameters
 	self.MAX_SPEED = 35
-	self.AIR_ACCEL = 5
-	self.MAX_AIR_VELOCITY = 25
+	self.UNFOCUSED_MULTIPLIER = 1.5 -- Default 1.5x speed boost when unfocused
 	self.HOVER_HEIGHT = 9
 	self.ENGAGE_DISTANCE = 15
 	self.OFFSET_DISTANCE = 3
@@ -31,6 +31,21 @@ function PathfindingModule.Init(State: any, Toggles: any)
 
 	-- Speed Anomaly Thresholds
 	self.SPEED_ANOMALY_THRESHOLD = 250
+
+	-- Window Focus Tracking
+	self.IsUnfocused = not UserInputService:GetFocused()
+	self.FocusConnections = {}
+
+	-- Track Window Focus Events
+	table.insert(self.FocusConnections, UserInputService.WindowFocusReleased:Connect(function()
+		self.IsUnfocused = true
+		print("[DEBUG] Window lost focus -> Applied unfocused speed multiplier.")
+	end))
+
+	table.insert(self.FocusConnections, UserInputService.WindowFocused:Connect(function()
+		self.IsUnfocused = false
+		print("[DEBUG] Window focused -> Reset to base speed.")
+	end))
 
 	-- Active Target & Static Post Tracking
 	self.CurrentEnemy = nil :: BasePart?
@@ -51,7 +66,21 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	return self
 end
 
--- Direct Frame-Rate Independent Step Movement
+-- Set Unfocused Multiplier via UI
+function PathfindingModule:SetUnfocusedMultiplier(mult: number)
+	self.UNFOCUSED_MULTIPLIER = mult
+	print("[DEBUG] Unfocused Multiplier Set To ->", mult)
+end
+
+-- Calculates effective max speed based on window focus state
+function PathfindingModule:GetEffectiveSpeed(): number
+	if self.IsUnfocused then
+		return self.MAX_SPEED * self.UNFOCUSED_MULTIPLIER
+	end
+	return self.MAX_SPEED
+end
+
+-- Direct Step Movement with Dynamic Focus Speed Scaling
 function PathfindingModule:StepMovement(root: BasePart, wishDir: Vector3, wishSpeed: number, targetYVelocity: number)
 	if root.Anchored then
 		root.Anchored = false
@@ -59,10 +88,10 @@ function PathfindingModule:StepMovement(root: BasePart, wishDir: Vector3, wishSp
 		print("[DEBUG] Unanchored RootPart for movement step.")
 	end
 
-	-- Direct velocity application ensures real-time movement distance remains identical regardless of FPS
-	local activeSpeed = math.min(wishSpeed, self.MAX_SPEED)
+	local effectiveMaxSpeed = self:GetEffectiveSpeed()
+	local activeSpeed = math.min(wishSpeed, effectiveMaxSpeed)
 	local targetVel = wishDir * activeSpeed
-	local clampedY = math.clamp(targetYVelocity, -self.MAX_AIR_VELOCITY, self.MAX_AIR_VELOCITY)
+	local clampedY = math.clamp(targetYVelocity, -self.MAX_AIR_VELOCITY or -25, self.MAX_AIR_VELOCITY or 25)
 
 	root.AssemblyLinearVelocity = Vector3.new(targetVel.X, clampedY, targetVel.Z)
 end
@@ -255,7 +284,6 @@ function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3):
 	local state = self.MoveState
 	local currentTime = os.clock()
 
-	-- Recompute path strictly every 0.5 real-world seconds
 	if not state.waypoints or (currentTime - state.lastComputeTime) > 0.5 then
 		state.lastComputeTime = currentTime
 		local path = PathfindingService:CreatePath({
@@ -331,8 +359,11 @@ function PathfindingModule:StartHoverTargeting()
 			local enemyPos = enemyRoot.Position
 			local now = os.clock()
 
-			local maxDriftDist = isBoss and self.MAX_DRIFT_DISTANCE_BOSS or self.MAX_DRIFT_DISTANCE_NORMAL
-			local arrivalDist = isBoss and self.ARRIVAL_DISTANCE_BOSS or self.ARRIVAL_DISTANCE_NORMAL
+			-- Calculate thresholds (widen slightly when unfocused to avoid arrival jitter at low FPS)
+			local focusScalar = self.IsUnfocused and 1.3 or 1.0
+			local maxDriftDist = (isBoss and self.MAX_DRIFT_DISTANCE_BOSS or self.MAX_DRIFT_DISTANCE_NORMAL) * focusScalar
+			local arrivalDist = (isBoss and self.ARRIVAL_DISTANCE_BOSS or self.ARRIVAL_DISTANCE_NORMAL) * focusScalar
+			local effectiveSpeed = self:GetEffectiveSpeed()
 
 			if self.LockPosition then
 				local postDelta = self.LockPosition - currentPos
@@ -343,15 +374,16 @@ function PathfindingModule:StartHoverTargeting()
 				if (now - self.LastDebugPrint) > 0.5 then
 					self.LastDebugPrint = now
 					local enemyTypeStr = isBoss and "BOSS" or "NORMAL ENEMY"
-					print(string.format("[%s ACTIVE] DistToLock: %.2f | EnemyType: %s | Anchored: %s",
+					print(string.format("[%s ACTIVE] DistToLock: %.2f | Unfocused: %s | EffectiveSpeed: %.1f | Anchored: %s",
 						isBoss and "BOSS MODE" or "POST",
 						distToLock,
-						enemyTypeStr,
+						tostring(self.IsUnfocused),
+						effectiveSpeed,
 						tostring(root.Anchored)
 					))
 				end
 
-				-- Anti-drift pull-back: Speed scales dynamically with dt to maintain real-time speed regardless of frame rate drops
+				-- Anti-drift pull-back: Speed scales dynamically with effective speed
 				if distToLock > maxDriftDist then
 					self.IsAtPost = false
 					if root.Anchored then
@@ -362,9 +394,8 @@ function PathfindingModule:StartHoverTargeting()
 						faceDownward(root)
 					end
 					
-					-- Scale required velocity by dt frame time to prevent lag drag
 					local dynamicCorrection = (distToLock / math.max(dt, 0.016))
-					local correctionSpeed = math.clamp(dynamicCorrection, self.MAX_SPEED, self.MAX_SPEED * 2.5)
+					local correctionSpeed = math.clamp(dynamicCorrection, effectiveSpeed, effectiveSpeed * 2.5)
 					root.AssemblyLinearVelocity = postDelta.Unit * correctionSpeed
 					return
 				end
@@ -397,8 +428,8 @@ function PathfindingModule:StartHoverTargeting()
 						faceDownward(root)
 					end
 					local wishDir = postDelta.Unit
-					local targetYVel = isBoss and 0 or (wishDir.Y * self.MAX_SPEED)
-					self:StepMovement(root, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, targetYVel)
+					local targetYVel = isBoss and 0 or (wishDir.Y * effectiveSpeed)
+					self:StepMovement(root, Vector3.new(wishDir.X, 0, wishDir.Z), effectiveSpeed, targetYVel)
 				end
 				return
 			end
@@ -408,7 +439,7 @@ function PathfindingModule:StartHoverTargeting()
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
-				self:StepMovement(root, wishDir, self.MAX_SPEED, root.AssemblyLinearVelocity.Y)
+				self:StepMovement(root, wishDir, effectiveSpeed, root.AssemblyLinearVelocity.Y)
 			else
 				if isBoss then
 					self.LockPosition = Vector3.new(enemyPos.X, currentPos.Y, enemyPos.Z)
