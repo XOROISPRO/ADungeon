@@ -33,7 +33,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.SPEED_ANOMALY_THRESHOLD = 250
 
 	-- Window Focus Tracking
-	self.IsUnfocused = not UserInputService:GetFocused()
+	self.IsUnfocused = false
 	self.FocusConnections = {}
 
 	-- Track Window Focus Events
