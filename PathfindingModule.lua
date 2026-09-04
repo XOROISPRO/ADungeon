@@ -39,6 +39,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.CurrentEnemy = nil :: BasePart?
 	self.LockPosition = nil :: Vector3?
 	self.IsAnchoredAtPost = false
+	self.IsAtPost = false
 
 	self.MoveState = {
 		velocity = Vector3.new(),
@@ -102,6 +103,10 @@ function PathfindingModule:StepMovement(root: BasePart, character: Model, wishDi
 	)
 end
 
+function PathfindingModule:IsAtPostPosition(): boolean
+	return self.IsAtPost
+end
+
 function PathfindingModule:SetHoverHeight(height: number)
 	self.HOVER_HEIGHT = height
 end
@@ -126,6 +131,7 @@ function PathfindingModule:SetPostMode(enabled: boolean)
 	self.POST_MODE = enabled
 	if not enabled then
 		self.LockPosition = nil
+		self.IsAtPost = false
 		local char = self.Player.Character
 		local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 		if root and root.Anchored then
@@ -141,6 +147,7 @@ function PathfindingModule:SetBossMode(enabled: boolean)
 	self.BOSS_MODE = enabled
 	self.LockPosition = nil
 	self.CurrentEnemy = nil
+	self.IsAtPost = false
 	local char = self.Player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if root and root.Anchored then
@@ -213,6 +220,7 @@ function PathfindingModule:GetClosestEnemy(): (BasePart?, boolean)
 			if self.CurrentEnemy ~= bossRoot then
 				self.CurrentEnemy = bossRoot
 				self.LockPosition = nil
+				self.IsAtPost = false
 			end
 			return bossRoot, true
 		end
@@ -233,6 +241,8 @@ function PathfindingModule:GetClosestEnemy(): (BasePart?, boolean)
 
 	self.CurrentEnemy = nil
 	self.LockPosition = nil
+	self.IsAtPost = false
+
 	if root.Anchored then
 		root.Anchored = false
 		self.IsAnchoredAtPost = false
@@ -378,6 +388,7 @@ function PathfindingModule:StartHoverTargeting()
 
 				-- Anti-drift pull-back
 				if distToLock > maxDriftDist then
+					self.IsAtPost = false
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
@@ -396,6 +407,7 @@ function PathfindingModule:StartHoverTargeting()
 				if distToLock <= arrivalDist then
 					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
+					self.IsAtPost = true
 
 					if isBoss then
 						local currentRotation = root.CFrame - root.CFrame.Position
@@ -411,6 +423,7 @@ function PathfindingModule:StartHoverTargeting()
 						print(string.format("[DEBUG] ANCHORED AT POST SPOT -> %s (EnemyType: %s)", tostring(root.Position), isBoss and "BOSS" or "NORMAL"))
 					end
 				else
+					self.IsAtPost = false
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
@@ -426,6 +439,7 @@ function PathfindingModule:StartHoverTargeting()
 			end
 
 			-- Pathing / Target approach
+			self.IsAtPost = false
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
@@ -453,6 +467,7 @@ function PathfindingModule:StartHoverTargeting()
 		else
 			self.CurrentEnemy = nil
 			self.LockPosition = nil
+			self.IsAtPost = false
 			self.MoveState.waypoints = nil
 			self.MoveState.velocity = Vector3.zero
 			if root.Anchored then
@@ -471,6 +486,7 @@ function PathfindingModule:StopPathfinding()
 	print("[DEBUG] Stopped Pathfinding")
 	self.CurrentEnemy = nil
 	self.LockPosition = nil
+	self.IsAtPost = false
 	self.MoveState.done = true
 	self.MoveState.waypoints = nil
 	self.MoveState.velocity = Vector3.new()
