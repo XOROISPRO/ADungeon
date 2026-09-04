@@ -7,7 +7,7 @@ local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
-print("Version2.2")
+print("Version2.3")
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
 	self.State = State
