@@ -2,7 +2,6 @@
 local PathfindingModule = {}
 PathfindingModule.__index = PathfindingModule
 
-print("V1.1")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
@@ -158,7 +157,9 @@ function PathfindingModule:IsBossEnemy(target: BasePart?): boolean
 	local bossRoom = dungeon and dungeon:FindFirstChild("bossRoom")
 	local enemyFolder = bossRoom and bossRoom:FindFirstChild("enemyFolder")
 
-	return enemyFolder ~= nil and target.Parent == enemyFolder
+	if not enemyFolder then return false end
+
+	return target:IsDescendantOf(enemyFolder)
 end
 
 function PathfindingModule:IsInBossRoom(root: BasePart): boolean
@@ -260,12 +261,14 @@ function PathfindingModule:GetClosestEnemy(): (BasePart?, boolean)
 		end
 	end
 
-	if closestEnemyPart then
-		print("[DEBUG] New Enemy Found ->", closestEnemyPart.Parent and closestEnemyPart.Parent.Name or "Unknown")
-	end
-
 	self.CurrentEnemy = closestEnemyPart
 	local isBoss = self:IsBossEnemy(closestEnemyPart)
+
+	if closestEnemyPart then
+		local enemyName = closestEnemyPart.Parent and closestEnemyPart.Parent.Name or "Unknown"
+		print(string.format("[DEBUG] New Enemy Found -> %s | IsBoss: %s", enemyName, tostring(isBoss)))
+	end
+
 	return closestEnemyPart, isBoss
 end
 
@@ -357,7 +360,6 @@ function PathfindingModule:StartHoverTargeting()
 			local arrivalDist = isBoss and self.ARRIVAL_DISTANCE_BOSS or self.ARRIVAL_DISTANCE_NORMAL
 
 			if self.LockPosition then
-				-- Compare flat XZ distance if handling a boss so Y offset doesn't affect lock checks
 				local postDelta = self.LockPosition - currentPos
 				local distToLock = isBoss 
 					and Vector3.new(postDelta.X, 0, postDelta.Z).Magnitude 
@@ -365,9 +367,11 @@ function PathfindingModule:StartHoverTargeting()
 
 				if (now - self.LastDebugPrint) > 0.5 then
 					self.LastDebugPrint = now
-					print(string.format("[%s ACTIVE] DistToLock: %.2f | Anchored: %s",
+					local enemyTypeStr = isBoss and "BOSS" or "NORMAL ENEMY"
+					print(string.format("[%s ACTIVE] DistToLock: %.2f | EnemyType: %s | Anchored: %s",
 						isBoss and "BOSS MODE" or "POST",
 						distToLock,
+						enemyTypeStr,
 						tostring(root.Anchored)
 					))
 				end
@@ -394,7 +398,6 @@ function PathfindingModule:StartHoverTargeting()
 					root.AssemblyLinearVelocity = Vector3.zero
 
 					if isBoss then
-						-- Snap to target X/Z, keeping player's existing Y height and orientation intact
 						local currentRotation = root.CFrame - root.CFrame.Position
 						root.CFrame = CFrame.new(self.LockPosition.X, currentPos.Y, self.LockPosition.Z) * currentRotation
 					else
@@ -405,7 +408,7 @@ function PathfindingModule:StartHoverTargeting()
 					if not root.Anchored then
 						root.Anchored = true
 						self.IsAnchoredAtPost = true
-						print("[DEBUG] ANCHORED AT POST SPOT ->", root.Position)
+						print(string.format("[DEBUG] ANCHORED AT POST SPOT -> %s (EnemyType: %s)", tostring(root.Position), isBoss and "BOSS" or "NORMAL"))
 					end
 				else
 					if root.Anchored then
@@ -429,7 +432,6 @@ function PathfindingModule:StartHoverTargeting()
 				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
 			else
 				if isBoss then
-					-- Lock to boss X and Z coordinates, using current player Y height
 					self.LockPosition = Vector3.new(enemyPos.X, currentPos.Y, enemyPos.Z)
 					print("[DEBUG] BOSS POSITION REACHED -> LOCKED POST (X/Z only) AT:", self.LockPosition)
 				else
