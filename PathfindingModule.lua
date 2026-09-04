@@ -7,7 +7,7 @@ local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
-print("Version2.3")
+print("Version2.4")
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
 	self.State = State
@@ -26,8 +26,8 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	-- Drift & Arrival Thresholds
 	self.MAX_DRIFT_DISTANCE_NORMAL = 5.0
 	self.MAX_DRIFT_DISTANCE_BOSS = 3
-	self.ARRIVAL_DISTANCE_NORMAL = 1.25
-	self.ARRIVAL_DISTANCE_BOSS = 1
+	self.ARRIVAL_DISTANCE_NORMAL = 0.5
+	self.ARRIVAL_DISTANCE_BOSS = 0.5
 
 	-- Speed Anomaly Thresholds
 	self.SPEED_ANOMALY_THRESHOLD = 250
@@ -360,7 +360,7 @@ function PathfindingModule:StartHoverTargeting()
 			local now = os.clock()
 
 			-- Calculate thresholds (widen slightly when unfocused to avoid arrival jitter at low FPS)
-			local focusScalar = self.IsUnfocused and 1.3 or 1.0
+			local focusScalar = self.IsUnfocused and 1.15 or 1.0
 			local maxDriftDist = (isBoss and self.MAX_DRIFT_DISTANCE_BOSS or self.MAX_DRIFT_DISTANCE_NORMAL) * focusScalar
 			local arrivalDist = (isBoss and self.ARRIVAL_DISTANCE_BOSS or self.ARRIVAL_DISTANCE_NORMAL) * focusScalar
 			local effectiveSpeed = self:GetEffectiveSpeed()
