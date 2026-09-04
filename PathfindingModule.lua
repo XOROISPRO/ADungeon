@@ -1,11 +1,11 @@
 --!strict
 local PathfindingModule = {}
 PathfindingModule.__index = PathfindingModule
-print("Version 2")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
+print("Version 2")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
