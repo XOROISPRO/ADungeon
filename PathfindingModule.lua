@@ -15,11 +15,8 @@ function PathfindingModule.Init(State: any, Toggles: any)
 
 	-- Physics & Position Parameters
 	self.MAX_SPEED = 35
-	self.ACCEL = 15
 	self.AIR_ACCEL = 5
 	self.MAX_AIR_VELOCITY = 25
-	self.FRICTION = 6
-	self.STOP_SPEED = 1.5
 	self.HOVER_HEIGHT = 9
 	self.ENGAGE_DISTANCE = 15
 	self.OFFSET_DISTANCE = 3
@@ -42,7 +39,6 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.IsAtPost = false
 
 	self.MoveState = {
-		velocity = Vector3.new(),
 		waypoints = nil :: {PathWaypoint}?,
 		waypointIndex = 1,
 		lastComputeTime = 0,
@@ -55,52 +51,20 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	return self
 end
 
--- Physics Helpers
-local function grounded(character: Model, root: BasePart): boolean
-	local rayParams = RaycastParams.new()
-	rayParams.FilterDescendantsInstances = { character }
-	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-	local result = Workspace:Raycast(root.Position, Vector3.new(0, -4.5, 0), rayParams)
-	return (result ~= nil and result.Instance ~= nil and result.Instance.CanCollide)
-end
-
-local function applyFriction(velocity: Vector3, isGrounded: boolean, friction: number, stopSpeed: number, dt: number): Vector3
-	local speed = velocity.Magnitude
-	if speed < 0.1 then return Vector3.new() end
-
-	local drop = isGrounded and (math.max(speed, stopSpeed) * friction * dt) or 0
-	local newSpeed = math.max(speed - drop, 0)
-	return (newSpeed ~= speed) and (velocity * (newSpeed / speed)) or velocity
-end
-
-local function accel(velocity: Vector3, wishDir: Vector3, wishSpeed: number, accelRate: number, dt: number): Vector3
-	local add = wishSpeed - velocity:Dot(wishDir)
-	if add <= 0 then return velocity end
-	return velocity + wishDir * math.min(accelRate * dt * wishSpeed, add)
-end
-
-function PathfindingModule:StepMovement(root: BasePart, character: Model, wishDir: Vector3, wishSpeed: number, dt: number, targetYVelocity: number)
+-- Direct Frame-Rate Independent Step Movement
+function PathfindingModule:StepMovement(root: BasePart, wishDir: Vector3, wishSpeed: number, targetYVelocity: number)
 	if root.Anchored then
 		root.Anchored = false
 		self.IsAnchoredAtPost = false
 		print("[DEBUG] Unanchored RootPart for movement step.")
 	end
 
-	local isGrounded = grounded(character, root)
-	local currentAccel = isGrounded and self.ACCEL or self.AIR_ACCEL
-	local activeMaxSpeed = isGrounded and wishSpeed or math.min(wishSpeed, self.MAX_AIR_VELOCITY)
-
-	self.MoveState.velocity = applyFriction(self.MoveState.velocity, isGrounded, self.FRICTION, self.STOP_SPEED, dt)
-	self.MoveState.velocity = accel(self.MoveState.velocity, wishDir, activeMaxSpeed, currentAccel, dt)
-
+	-- Direct velocity application ensures real-time movement distance remains identical regardless of FPS
+	local activeSpeed = math.min(wishSpeed, self.MAX_SPEED)
+	local targetVel = wishDir * activeSpeed
 	local clampedY = math.clamp(targetYVelocity, -self.MAX_AIR_VELOCITY, self.MAX_AIR_VELOCITY)
 
-	root.AssemblyLinearVelocity = Vector3.new(
-		self.MoveState.velocity.X,
-		clampedY,
-		self.MoveState.velocity.Z
-	)
+	root.AssemblyLinearVelocity = Vector3.new(targetVel.X, clampedY, targetVel.Z)
 end
 
 function PathfindingModule:IsAtPostPosition(): boolean
@@ -289,8 +253,9 @@ end
 
 function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3): Vector3
 	local state = self.MoveState
-	local currentTime = tick()
+	local currentTime = os.clock()
 
+	-- Recompute path strictly every 0.5 real-world seconds
 	if not state.waypoints or (currentTime - state.lastComputeTime) > 0.5 then
 		state.lastComputeTime = currentTime
 		local path = PathfindingService:CreatePath({
@@ -364,7 +329,7 @@ function PathfindingModule:StartHoverTargeting()
 		if enemyRoot then
 			local currentPos = root.Position
 			local enemyPos = enemyRoot.Position
-			local now = tick()
+			local now = os.clock()
 
 			local maxDriftDist = isBoss and self.MAX_DRIFT_DISTANCE_BOSS or self.MAX_DRIFT_DISTANCE_NORMAL
 			local arrivalDist = isBoss and self.ARRIVAL_DISTANCE_BOSS or self.ARRIVAL_DISTANCE_NORMAL
@@ -386,7 +351,7 @@ function PathfindingModule:StartHoverTargeting()
 					))
 				end
 
-				-- Anti-drift pull-back
+				-- Anti-drift pull-back: Speed scales dynamically with dt to maintain real-time speed regardless of frame rate drops
 				if distToLock > maxDriftDist then
 					self.IsAtPost = false
 					if root.Anchored then
@@ -396,16 +361,16 @@ function PathfindingModule:StartHoverTargeting()
 					if not isBoss then
 						faceDownward(root)
 					end
-					local correctionSpeed = math.clamp(self.MAX_SPEED * (distToLock / 5), self.MAX_SPEED, self.MAX_SPEED * 2)
-					local pullVelocity = postDelta.Unit * correctionSpeed
-					root.AssemblyLinearVelocity = pullVelocity
-					self.MoveState.velocity = Vector3.new(pullVelocity.X, 0, pullVelocity.Z)
+					
+					-- Scale required velocity by dt frame time to prevent lag drag
+					local dynamicCorrection = (distToLock / math.max(dt, 0.016))
+					local correctionSpeed = math.clamp(dynamicCorrection, self.MAX_SPEED, self.MAX_SPEED * 2.5)
+					root.AssemblyLinearVelocity = postDelta.Unit * correctionSpeed
 					return
 				end
 
 				-- Snap & Anchor
 				if distToLock <= arrivalDist then
-					self.MoveState.velocity = Vector3.zero
 					root.AssemblyLinearVelocity = Vector3.zero
 					self.IsAtPost = true
 
@@ -433,7 +398,7 @@ function PathfindingModule:StartHoverTargeting()
 					end
 					local wishDir = postDelta.Unit
 					local targetYVel = isBoss and 0 or (wishDir.Y * self.MAX_SPEED)
-					self:StepMovement(root, char, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, dt, targetYVel)
+					self:StepMovement(root, Vector3.new(wishDir.X, 0, wishDir.Z), self.MAX_SPEED, targetYVel)
 				end
 				return
 			end
@@ -443,7 +408,7 @@ function PathfindingModule:StartHoverTargeting()
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
-				self:StepMovement(root, char, wishDir, self.MAX_SPEED, dt, root.AssemblyLinearVelocity.Y)
+				self:StepMovement(root, wishDir, self.MAX_SPEED, root.AssemblyLinearVelocity.Y)
 			else
 				if isBoss then
 					self.LockPosition = Vector3.new(enemyPos.X, currentPos.Y, enemyPos.Z)
@@ -469,7 +434,6 @@ function PathfindingModule:StartHoverTargeting()
 			self.LockPosition = nil
 			self.IsAtPost = false
 			self.MoveState.waypoints = nil
-			self.MoveState.velocity = Vector3.zero
 			if root.Anchored then
 				root.Anchored = false
 				self.IsAnchoredAtPost = false
@@ -489,7 +453,6 @@ function PathfindingModule:StopPathfinding()
 	self.IsAtPost = false
 	self.MoveState.done = true
 	self.MoveState.waypoints = nil
-	self.MoveState.velocity = Vector3.new()
 
 	if self.MoveConnection then
 		self.MoveConnection:Disconnect()
