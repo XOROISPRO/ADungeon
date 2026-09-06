@@ -7,7 +7,9 @@ local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
-print("Version2.4")
+
+print("Version2.5 - Dynamic Collisions")
+
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
 	self.State = State
@@ -16,7 +18,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 
 	-- Physics & Position Parameters
 	self.MAX_SPEED = 35
-	self.UNFOCUSED_MULTIPLIER = 1.5 -- Default 1.5x speed boost when unfocused
+	self.UNFOCUSED_MULTIPLIER = 1.5
 	self.HOVER_HEIGHT = 9
 	self.ENGAGE_DISTANCE = 15
 	self.OFFSET_DISTANCE = 3
@@ -32,11 +34,13 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	-- Speed Anomaly Thresholds
 	self.SPEED_ANOMALY_THRESHOLD = 250
 
+	-- Track Original Collision States to Restore Seamlessly
+	self.OriginalCanCollide = {} :: {[BasePart]: boolean}
+
 	-- Window Focus Tracking
 	self.IsUnfocused = false
 	self.FocusConnections = {}
 
-	-- Track Window Focus Events
 	table.insert(self.FocusConnections, UserInputService.WindowFocusReleased:Connect(function()
 		self.IsUnfocused = true
 		print("[DEBUG] Window lost focus -> Applied unfocused speed multiplier.")
@@ -66,13 +70,38 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	return self
 end
 
--- Set Unfocused Multiplier via UI
+-- Helper: Toggles Character Collisions
+function PathfindingModule:SetCharacterCollisions(canCollide: boolean)
+	local char = self.Player.Character
+	if not char then return end
+
+	for _, part in pairs(char:GetChildren()) do
+		if part:IsA("BasePart") then
+			if not canCollide then
+				if self.OriginalCanCollide[part] == nil then
+					self.OriginalCanCollide[part] = part.CanCollide
+				end
+				part.CanCollide = false
+			else
+				if self.OriginalCanCollide[part] ~= nil then
+					part.CanCollide = self.OriginalCanCollide[part]
+				else
+					part.CanCollide = true
+				end
+			end
+		end
+	end
+
+	if canCollide then
+		table.clear(self.OriginalCanCollide)
+	end
+end
+
 function PathfindingModule:SetUnfocusedMultiplier(mult: number)
 	self.UNFOCUSED_MULTIPLIER = mult
 	print("[DEBUG] Unfocused Multiplier Set To ->", mult)
 end
 
--- Calculates effective max speed based on window focus state
 function PathfindingModule:GetEffectiveSpeed(): number
 	if self.IsUnfocused then
 		return self.MAX_SPEED * self.UNFOCUSED_MULTIPLIER
@@ -80,13 +109,15 @@ function PathfindingModule:GetEffectiveSpeed(): number
 	return self.MAX_SPEED
 end
 
--- Direct Step Movement with Dynamic Focus Speed Scaling
 function PathfindingModule:StepMovement(root: BasePart, wishDir: Vector3, wishSpeed: number, targetYVelocity: number)
 	if root.Anchored then
 		root.Anchored = false
 		self.IsAnchoredAtPost = false
 		print("[DEBUG] Unanchored RootPart for movement step.")
 	end
+
+	-- Ensure noclip is active while actively stepping/moving
+	self:SetCharacterCollisions(false)
 
 	local effectiveMaxSpeed = self:GetEffectiveSpeed()
 	local activeSpeed = math.min(wishSpeed, effectiveMaxSpeed)
@@ -132,6 +163,7 @@ function PathfindingModule:SetPostMode(enabled: boolean)
 			self.IsAnchoredAtPost = false
 			print("[DEBUG] Post mode disabled -> Unanchored RootPart.")
 		end
+		self:SetCharacterCollisions(true)
 	end
 	print("[DEBUG] POST_MODE Toggled ->", self.POST_MODE)
 end
@@ -147,48 +179,40 @@ function PathfindingModule:SetBossMode(enabled: boolean)
 		root.Anchored = false
 		self.IsAnchoredAtPost = false
 	end
+	self:SetCharacterCollisions(true)
 	print("[DEBUG] BOSS_MODE Toggled ->", self.BOSS_MODE)
 end
 
 function PathfindingModule:IsBossEnemy(target: BasePart?): boolean
 	if not target or not target.Parent then return false end
-
 	local dungeon = Workspace:FindFirstChild("dungeon")
 	local bossRoom = dungeon and dungeon:FindFirstChild("bossRoom")
 	local enemyFolder = bossRoom and bossRoom:FindFirstChild("enemyFolder")
-
 	if not enemyFolder then return false end
-
 	return target:IsDescendantOf(enemyFolder)
 end
 
 function PathfindingModule:IsInBossRoom(root: BasePart): boolean
 	local dungeon = Workspace:FindFirstChild("dungeon")
 	if not dungeon then return false end
-
 	local bossRoom = dungeon:FindFirstChild("bossRoom")
 	if not bossRoom then return false end
-
 	if bossRoom:IsA("Model") then
 		local roomCFrame, roomSize = bossRoom:GetBoundingBox()
 		local localPos = roomCFrame:PointToObjectSpace(root.Position)
 		local halfSize = roomSize * 0.5
 		return math.abs(localPos.X) <= halfSize.X and math.abs(localPos.Z) <= halfSize.Z
 	end
-
 	return false
 end
 
 function PathfindingModule:GetBossEnemy(): BasePart?
 	local dungeon = Workspace:FindFirstChild("dungeon")
 	if not dungeon then return nil end
-
 	local bossRoom = dungeon:FindFirstChild("bossRoom")
 	if not bossRoom then return nil end
-
 	local enemyFolder = bossRoom:FindFirstChild("enemyFolder")
 	if not enemyFolder then return nil end
-
 	for _, child in pairs(enemyFolder:GetChildren()) do
 		if child:IsA("Model") then
 			local bossHum = child:FindFirstChildOfClass("Humanoid")
@@ -359,7 +383,6 @@ function PathfindingModule:StartHoverTargeting()
 			local enemyPos = enemyRoot.Position
 			local now = os.clock()
 
-			-- Calculate thresholds (widen slightly when unfocused to avoid arrival jitter at low FPS)
 			local focusScalar = self.IsUnfocused and 1.15 or 1.0
 			local maxDriftDist = (isBoss and self.MAX_DRIFT_DISTANCE_BOSS or self.MAX_DRIFT_DISTANCE_NORMAL) * focusScalar
 			local arrivalDist = (isBoss and self.ARRIVAL_DISTANCE_BOSS or self.ARRIVAL_DISTANCE_NORMAL) * focusScalar
@@ -383,9 +406,10 @@ function PathfindingModule:StartHoverTargeting()
 					))
 				end
 
-				-- Anti-drift pull-back: Speed scales dynamically with effective speed
+				-- Anti-drift pull-back: Keep collisions off while pulling back
 				if distToLock > maxDriftDist then
 					self.IsAtPost = false
+					self:SetCharacterCollisions(false)
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
@@ -393,14 +417,14 @@ function PathfindingModule:StartHoverTargeting()
 					if not isBoss then
 						faceDownward(root)
 					end
-					
+
 					local dynamicCorrection = (distToLock / math.max(dt, 0.016))
 					local correctionSpeed = math.clamp(dynamicCorrection, effectiveSpeed, effectiveSpeed * 2.5)
 					root.AssemblyLinearVelocity = postDelta.Unit * correctionSpeed
 					return
 				end
 
-				-- Snap & Anchor
+				-- Snap, Anchor & Restore Collisions at Post
 				if distToLock <= arrivalDist then
 					root.AssemblyLinearVelocity = Vector3.zero
 					self.IsAtPost = true
@@ -416,10 +440,12 @@ function PathfindingModule:StartHoverTargeting()
 					if not root.Anchored then
 						root.Anchored = true
 						self.IsAnchoredAtPost = true
+						self:SetCharacterCollisions(true) -- Restore normal collision when locked
 						print(string.format("[DEBUG] ANCHORED AT POST SPOT -> %s (EnemyType: %s)", tostring(root.Position), isBoss and "BOSS" or "NORMAL"))
 					end
 				else
 					self.IsAtPost = false
+					self:SetCharacterCollisions(false)
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
@@ -434,8 +460,9 @@ function PathfindingModule:StartHoverTargeting()
 				return
 			end
 
-			-- Pathing / Target approach
+			-- Pathing / Target approach (Keep collisions disabled during traversal)
 			self.IsAtPost = false
+			self:SetCharacterCollisions(false)
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
@@ -465,6 +492,7 @@ function PathfindingModule:StartHoverTargeting()
 			self.LockPosition = nil
 			self.IsAtPost = false
 			self.MoveState.waypoints = nil
+			self:SetCharacterCollisions(true) -- Restore normal collisions when no targets exist
 			if root.Anchored then
 				root.Anchored = false
 				self.IsAnchoredAtPost = false
@@ -489,6 +517,8 @@ function PathfindingModule:StopPathfinding()
 		self.MoveConnection:Disconnect()
 		self.MoveConnection = nil
 	end
+
+	self:SetCharacterCollisions(true) -- Restore collisions on cleanup
 
 	local char = self.Player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
