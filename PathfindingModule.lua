@@ -8,7 +8,7 @@ local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
 
-print("Version 2.9 - Auto Jump Recovery & Anti-Stuck")
+print("Version 3.0 - Auto-Path Recalculation on Stuck Detection")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
@@ -30,7 +30,6 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	-- Stuck Detection Parameters
 	self.LastPosition = Vector3.zero
 	self.StuckTimer = 0
-	self.LastJumpTime = 0
 
 	-- Drift & Arrival Thresholds
 	self.MAX_DRIFT_DISTANCE_NORMAL = 5.0
@@ -91,27 +90,25 @@ function PathfindingModule:SetAscentSpeed(speed: number)
 	print("[DEBUG] Ascent Speed set to:", speed)
 end
 
--- Checks if character is stuck and forces a Jump
-function PathfindingModule:CheckAndTriggerJump(root: BasePart, dt: number)
-	local char = self.Player.Character
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if not hum or root.Anchored then 
+-- Checks if character is stuck and forces immediate Path Recalculation
+function PathfindingModule:CheckStuckAndRecalculate(root: BasePart, dt: number)
+	if root.Anchored or self.LockPosition then 
 		self.StuckTimer = 0
 		return 
 	end
 
-	local now = os.clock()
 	local currentPos = root.Position
 	local distMoved = (Vector3.new(currentPos.X, 0, currentPos.Z) - Vector3.new(self.LastPosition.X, 0, self.LastPosition.Z)).Magnitude
 
-	-- If moving intention is active but character isn't physically advancing
-	if root.AssemblyLinearVelocity.Magnitude > 2 and distMoved < 0.4 then
+	-- If moving velocity is applied but physical position remains unchanged
+	if root.AssemblyLinearVelocity.Magnitude > 3 and distMoved < 0.5 then
 		self.StuckTimer += dt
-		if self.StuckTimer >= 0.4 and (now - self.LastJumpTime) > 0.8 then
-			self.LastJumpTime = now
+		if self.StuckTimer >= 0.35 then
 			self.StuckTimer = 0
-			hum.Jump = true
-			print("[DEBUG] Stuck detected! Automatically forced jump.")
+			-- Force pathfinding to rebuild a fresh path next frame
+			self.MoveState.waypoints = nil
+			self.MoveState.lastComputeTime = 0
+			print("[DEBUG] Stuck detected! Forcing immediate Pathfinding Recalculation.")
 		end
 	else
 		self.StuckTimer = math.max(0, self.StuckTimer - dt)
@@ -407,8 +404,8 @@ function PathfindingModule:StartHoverTargeting()
 			return
 		end
 
-		-- Run Auto-Jump Stuck Prevention Check
-		self:CheckAndTriggerJump(root, dt)
+		-- Check if stuck on ground obstacles and recalculate pathing
+		self:CheckStuckAndRecalculate(root, dt)
 
 		local enemyRoot, isBoss = self:GetClosestEnemy()
 		if enemyRoot then
