@@ -8,7 +8,7 @@ local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
 
-print("Version 2.75 - Smooth CFrame Lerp & Anti-Rubberband Adjustments")
+print("Version 2.8 - Capped Ascent Speed & Anti-Rubberband")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
@@ -25,6 +25,10 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.POST_MODE = true
 	self.BOSS_MODE = false
 	self.LERP_SPEED = 5
+
+	-- NEW: Controlled vertical speed (Lower = Smoother/Slower rise to prevent anti-cheat triggers)
+	self.ASCENT_SPEED = 10 
+
 	-- Drift & Arrival Thresholds
 	self.MAX_DRIFT_DISTANCE_NORMAL = 5.0
 	self.MAX_DRIFT_DISTANCE_BOSS = 3
@@ -79,6 +83,12 @@ function PathfindingModule:GetEffectiveSpeed(): number
 	return self.MAX_SPEED
 end
 
+-- NEW: Helper function to adjust how fast you rise to the post height
+function PathfindingModule:SetAscentSpeed(speed: number)
+	self.ASCENT_SPEED = speed
+	print("[DEBUG] Ascent Speed set to:", speed)
+end
+
 function PathfindingModule:StepMovement(root: BasePart, wishDir: Vector3, wishSpeed: number, targetYVelocity: number)
 	if root.Anchored then
 		root.Anchored = false
@@ -89,7 +99,10 @@ function PathfindingModule:StepMovement(root: BasePart, wishDir: Vector3, wishSp
 	local effectiveMaxSpeed = self:GetEffectiveSpeed()
 	local activeSpeed = math.min(wishSpeed, effectiveMaxSpeed)
 	local targetVel = wishDir * activeSpeed
-	local clampedY = math.clamp(targetYVelocity, -self.MAX_AIR_VELOCITY or -25, self.MAX_AIR_VELOCITY or 25)
+	
+	-- Cap vertical velocity explicitly using self.ASCENT_SPEED
+	local maxAir = self.ASCENT_SPEED or 18
+	local clampedY = math.clamp(targetYVelocity, -maxAir, maxAir)
 
 	root.AssemblyLinearVelocity = Vector3.new(targetVel.X, clampedY, targetVel.Z)
 end
@@ -274,7 +287,7 @@ function PathfindingModule:HasLineOfSight(origin: Vector3, targetPos: Vector3): 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.FilterDescendantsInstances = {char, Workspace:FindFirstChild("dungeon")}
-	
+
 	local rayDirection = targetPos - origin
 	local result = Workspace:Raycast(origin, rayDirection, rayParams)
 	return result == nil
@@ -390,7 +403,7 @@ function PathfindingModule:StartHoverTargeting()
 					))
 				end
 
-				-- Anti-drift pull-back
+				-- Anti-drift pull-back (Smoothed vertical velocity cap applied here)
 				if distToLock > maxDriftDist then
 					self.IsAtPost = false
 					if root.Anchored then
@@ -401,9 +414,11 @@ function PathfindingModule:StartHoverTargeting()
 						faceDownward(root)
 					end
 
-					local dynamicCorrection = (distToLock / math.max(dt, 0.016))
-					local correctionSpeed = math.clamp(dynamicCorrection, effectiveSpeed, effectiveSpeed * 2.5)
-					root.AssemblyLinearVelocity = postDelta.Unit * correctionSpeed
+					local wishDir = postDelta.Unit
+					-- Smoothly cap vertical ascent velocity to self.ASCENT_SPEED instead of multiplying distToLock
+					local targetYVel = math.clamp(wishDir.Y * self.ASCENT_SPEED, -self.ASCENT_SPEED, self.ASCENT_SPEED)
+					
+					self:StepMovement(root, Vector3.new(wishDir.X, 0, wishDir.Z), effectiveSpeed, targetYVel)
 					return
 				end
 
@@ -421,7 +436,7 @@ function PathfindingModule:StartHoverTargeting()
 					end
 
 					-- Smoothly transition position using Lerp over time instead of teleporting
-					root.CFrame = root.CFrame:Lerp(targetCFrame, math.clamp(dt * self.LERP_SPEED, 0.1, 1))
+					root.CFrame = root.CFrame:Lerp(targetCFrame, math.clamp(dt * self.LERP_SPEED, 0.05, 1))
 					root.AssemblyLinearVelocity = root.AssemblyLinearVelocity * 0.5 -- Gradual velocity dampen
 
 					-- Anchor only when virtually touching post spot (< 0.1 studs away)
@@ -443,7 +458,7 @@ function PathfindingModule:StartHoverTargeting()
 						faceDownward(root)
 					end
 					local wishDir = postDelta.Unit
-					local targetYVel = isBoss and 0 or (wishDir.Y * effectiveSpeed)
+					local targetYVel = isBoss and 0 or math.clamp(wishDir.Y * self.ASCENT_SPEED, -self.ASCENT_SPEED, self.ASCENT_SPEED)
 					self:StepMovement(root, Vector3.new(wishDir.X, 0, wishDir.Z), effectiveSpeed, targetYVel)
 				end
 				return
