@@ -8,7 +8,7 @@ local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
 
-print("Version 2.7 - Smooth CFrame Lerp & Anti-Rubberband")
+print("Version 2.75 - Smooth CFrame Lerp & Anti-Rubberband Adjustments")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
@@ -24,7 +24,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.OFFSET_DISTANCE = 3
 	self.POST_MODE = true
 	self.BOSS_MODE = false
-	self.LERP_SPEED = 9
+	self.LERP_SPEED = 5
 	-- Drift & Arrival Thresholds
 	self.MAX_DRIFT_DISTANCE_NORMAL = 5.0
 	self.MAX_DRIFT_DISTANCE_BOSS = 3
