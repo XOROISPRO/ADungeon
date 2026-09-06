@@ -8,7 +8,7 @@ local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
 
-print("Version 2.875 - Capped Ascent Speed & Anti-Rubberband")
+print("Version 2.9 - Auto Jump Recovery & Anti-Stuck")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
@@ -24,10 +24,13 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.OFFSET_DISTANCE = 3
 	self.POST_MODE = true
 	self.BOSS_MODE = false
-	self.LERP_SPEED = 2
+	self.LERP_SPEED = 5
+	self.ASCENT_SPEED = 18 
 
-	-- NEW: Controlled vertical speed (Lower = Smoother/Slower rise to prevent anti-cheat triggers)
-	self.ASCENT_SPEED = 7 
+	-- Stuck Detection Parameters
+	self.LastPosition = Vector3.zero
+	self.StuckTimer = 0
+	self.LastJumpTime = 0
 
 	-- Drift & Arrival Thresholds
 	self.MAX_DRIFT_DISTANCE_NORMAL = 5.0
@@ -83,10 +86,38 @@ function PathfindingModule:GetEffectiveSpeed(): number
 	return self.MAX_SPEED
 end
 
--- NEW: Helper function to adjust how fast you rise to the post height
 function PathfindingModule:SetAscentSpeed(speed: number)
 	self.ASCENT_SPEED = speed
 	print("[DEBUG] Ascent Speed set to:", speed)
+end
+
+-- Checks if character is stuck and forces a Jump
+function PathfindingModule:CheckAndTriggerJump(root: BasePart, dt: number)
+	local char = self.Player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hum or root.Anchored then 
+		self.StuckTimer = 0
+		return 
+	end
+
+	local now = os.clock()
+	local currentPos = root.Position
+	local distMoved = (Vector3.new(currentPos.X, 0, currentPos.Z) - Vector3.new(self.LastPosition.X, 0, self.LastPosition.Z)).Magnitude
+
+	-- If moving intention is active but character isn't physically advancing
+	if root.AssemblyLinearVelocity.Magnitude > 2 and distMoved < 0.4 then
+		self.StuckTimer += dt
+		if self.StuckTimer >= 0.4 and (now - self.LastJumpTime) > 0.8 then
+			self.LastJumpTime = now
+			self.StuckTimer = 0
+			hum.Jump = true
+			print("[DEBUG] Stuck detected! Automatically forced jump.")
+		end
+	else
+		self.StuckTimer = math.max(0, self.StuckTimer - dt)
+	end
+
+	self.LastPosition = currentPos
 end
 
 function PathfindingModule:StepMovement(root: BasePart, wishDir: Vector3, wishSpeed: number, targetYVelocity: number)
@@ -100,7 +131,6 @@ function PathfindingModule:StepMovement(root: BasePart, wishDir: Vector3, wishSp
 	local activeSpeed = math.min(wishSpeed, effectiveMaxSpeed)
 	local targetVel = wishDir * activeSpeed
 	
-	-- Cap vertical velocity explicitly using self.ASCENT_SPEED
 	local maxAir = self.ASCENT_SPEED or 18
 	local clampedY = math.clamp(targetYVelocity, -maxAir, maxAir)
 
@@ -363,6 +393,8 @@ function PathfindingModule:StartHoverTargeting()
 
 	self.State.Navigating = true
 	self.MoveState.done = false
+	self.LastPosition = root.Position
+	self.StuckTimer = 0
 	print("[DEBUG] Started Targeting")
 
 	self.MoveConnection = RunService.Heartbeat:Connect(function(dt)
@@ -374,6 +406,9 @@ function PathfindingModule:StartHoverTargeting()
 			self:RestartPathing()
 			return
 		end
+
+		-- Run Auto-Jump Stuck Prevention Check
+		self:CheckAndTriggerJump(root, dt)
 
 		local enemyRoot, isBoss = self:GetClosestEnemy()
 		if enemyRoot then
@@ -403,7 +438,7 @@ function PathfindingModule:StartHoverTargeting()
 					))
 				end
 
-				-- Anti-drift pull-back (Smoothed vertical velocity cap applied here)
+				-- Anti-drift pull-back
 				if distToLock > maxDriftDist then
 					self.IsAtPost = false
 					if root.Anchored then
@@ -415,18 +450,16 @@ function PathfindingModule:StartHoverTargeting()
 					end
 
 					local wishDir = postDelta.Unit
-					-- Smoothly cap vertical ascent velocity to self.ASCENT_SPEED instead of multiplying distToLock
 					local targetYVel = math.clamp(wishDir.Y * self.ASCENT_SPEED, -self.ASCENT_SPEED, self.ASCENT_SPEED)
 					
 					self:StepMovement(root, Vector3.new(wishDir.X, 0, wishDir.Z), effectiveSpeed, targetYVel)
 					return
 				end
 
-				-- Smooth Interpolated Arrival (Replaces instant CFrame hard-snapping)
+				-- Smooth Interpolated Arrival
 				if distToLock <= arrivalDist then
 					self.IsAtPost = true
 
-					-- Calculate target end orientation
 					local targetCFrame
 					if isBoss then
 						local currentRotation = root.CFrame - root.CFrame.Position
@@ -435,11 +468,9 @@ function PathfindingModule:StartHoverTargeting()
 						targetCFrame = CFrame.new(self.LockPosition) * CFrame.Angles(-math.rad(90), 0, 0)
 					end
 
-					-- Smoothly transition position using Lerp over time instead of teleporting
 					root.CFrame = root.CFrame:Lerp(targetCFrame, math.clamp(dt * self.LERP_SPEED, 0.05, 1))
-					root.AssemblyLinearVelocity = root.AssemblyLinearVelocity * 0.5 -- Gradual velocity dampen
+					root.AssemblyLinearVelocity = root.AssemblyLinearVelocity * 0.5
 
-					-- Anchor only when virtually touching post spot (< 0.1 studs away)
 					if distToLock <= 0.1 then
 						root.AssemblyLinearVelocity = Vector3.zero
 						if not root.Anchored then
