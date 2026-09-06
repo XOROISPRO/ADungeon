@@ -8,7 +8,7 @@ local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
 
-print("Version2.5 - Dynamic Collisions")
+print("Version 2.6 - Ground Pathfinding & Wall Avoidance")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
@@ -33,9 +33,6 @@ function PathfindingModule.Init(State: any, Toggles: any)
 
 	-- Speed Anomaly Thresholds
 	self.SPEED_ANOMALY_THRESHOLD = 250
-
-	-- Track Original Collision States to Restore Seamlessly
-	self.OriginalCanCollide = {} :: {[BasePart]: boolean}
 
 	-- Window Focus Tracking
 	self.IsUnfocused = false
@@ -70,33 +67,6 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	return self
 end
 
--- Helper: Toggles Character Collisions
-function PathfindingModule:SetCharacterCollisions(canCollide: boolean)
-	local char = self.Player.Character
-	if not char then return end
-
-	for _, part in pairs(char:GetChildren()) do
-		if part:IsA("BasePart") then
-			if not canCollide then
-				if self.OriginalCanCollide[part] == nil then
-					self.OriginalCanCollide[part] = part.CanCollide
-				end
-				part.CanCollide = false
-			else
-				if self.OriginalCanCollide[part] ~= nil then
-					part.CanCollide = self.OriginalCanCollide[part]
-				else
-					part.CanCollide = true
-				end
-			end
-		end
-	end
-
-	if canCollide then
-		table.clear(self.OriginalCanCollide)
-	end
-end
-
 function PathfindingModule:SetUnfocusedMultiplier(mult: number)
 	self.UNFOCUSED_MULTIPLIER = mult
 	print("[DEBUG] Unfocused Multiplier Set To ->", mult)
@@ -115,9 +85,6 @@ function PathfindingModule:StepMovement(root: BasePart, wishDir: Vector3, wishSp
 		self.IsAnchoredAtPost = false
 		print("[DEBUG] Unanchored RootPart for movement step.")
 	end
-
-	-- Ensure noclip is active while actively stepping/moving
-	self:SetCharacterCollisions(false)
 
 	local effectiveMaxSpeed = self:GetEffectiveSpeed()
 	local activeSpeed = math.min(wishSpeed, effectiveMaxSpeed)
@@ -163,7 +130,6 @@ function PathfindingModule:SetPostMode(enabled: boolean)
 			self.IsAnchoredAtPost = false
 			print("[DEBUG] Post mode disabled -> Unanchored RootPart.")
 		end
-		self:SetCharacterCollisions(true)
 	end
 	print("[DEBUG] POST_MODE Toggled ->", self.POST_MODE)
 end
@@ -179,7 +145,6 @@ function PathfindingModule:SetBossMode(enabled: boolean)
 		root.Anchored = false
 		self.IsAnchoredAtPost = false
 	end
-	self:SetCharacterCollisions(true)
 	print("[DEBUG] BOSS_MODE Toggled ->", self.BOSS_MODE)
 end
 
@@ -304,39 +269,64 @@ local function faceDownward(root: BasePart)
 	root.CFrame = CFrame.new(currentPos) * CFrame.Angles(-math.rad(90), 0, 0)
 end
 
+-- Checks whether direct straight path is obstructed by a wall
+function PathfindingModule:HasLineOfSight(origin: Vector3, targetPos: Vector3): boolean
+	local char = self.Player.Character
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = {char, Workspace:FindFirstChild("dungeon")}
+	
+	local rayDirection = targetPos - origin
+	local result = Workspace:Raycast(origin, rayDirection, rayParams)
+	return result == nil
+end
+
+-- Improved ground pathing with obstacle awareness & waypoint tracking
 function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3): Vector3
 	local state = self.MoveState
 	local currentTime = os.clock()
+	local rootPos = root.Position
 
-	if not state.waypoints or (currentTime - state.lastComputeTime) > 0.5 then
+	-- Direct line of sight optimization (short paths without pathfinding overhead)
+	if self:HasLineOfSight(rootPos, targetPos) then
+		state.waypoints = nil
+		local directDelta = Vector3.new(targetPos.X - rootPos.X, 0, targetPos.Z - rootPos.Z)
+		return directDelta.Magnitude > 0.1 and directDelta.Unit or Vector3.zero
+	end
+
+	-- Calculate path if no waypoints or state is stale
+	if not state.waypoints or (currentTime - state.lastComputeTime) > 0.35 then
 		state.lastComputeTime = currentTime
 		local path = PathfindingService:CreatePath({
-			AgentRadius = 2,
-			AgentHeight = 5,
-			AgentCanJump = true
+			AgentRadius = 3.0,     -- Margins away from walls
+			AgentHeight = 5.0,
+			AgentCanJump = true,
+			AgentCanClimb = false,
 		})
+
 		local ok, _ = pcall(function()
-			path:ComputeAsync(root.Position, targetPos)
+			path:ComputeAsync(rootPos, targetPos)
 		end)
 
 		if ok and path.Status == Enum.PathStatus.Success then
 			state.waypoints = path:GetWaypoints()
-			state.waypointIndex = 1
+			state.waypointIndex = 2 -- Skip starting node
 		else
 			state.waypoints = nil
 		end
 	end
 
+	-- Advance through waypoints
 	if state.waypoints and state.waypointIndex <= #state.waypoints then
 		local currentWP = state.waypoints[state.waypointIndex]
 		local wpPos = currentWP.Position
-		local flatDelta = Vector3.new(wpPos.X - root.Position.X, 0, wpPos.Z - root.Position.Z)
+		local flatDelta = Vector3.new(wpPos.X - rootPos.X, 0, wpPos.Z - rootPos.Z)
 
-		if flatDelta.Magnitude < 3 then
+		if flatDelta.Magnitude < 2.5 then
 			state.waypointIndex += 1
 			if state.waypointIndex <= #state.waypoints then
 				local nextWP = state.waypoints[state.waypointIndex]
-				flatDelta = Vector3.new(nextWP.Position.X - root.Position.X, 0, nextWP.Position.Z - root.Position.Z)
+				flatDelta = Vector3.new(nextWP.Position.X - rootPos.X, 0, nextWP.Position.Z - rootPos.Z)
 			end
 		end
 
@@ -345,8 +335,8 @@ function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3):
 		end
 	end
 
-	local directDelta = Vector3.new(targetPos.X - root.Position.X, 0, targetPos.Z - root.Position.Z)
-	return directDelta.Magnitude > 0.1 and directDelta.Unit or Vector3.zero
+	local fallbackDelta = Vector3.new(targetPos.X - rootPos.X, 0, targetPos.Z - rootPos.Z)
+	return fallbackDelta.Magnitude > 0.1 and fallbackDelta.Unit or Vector3.zero
 end
 
 function PathfindingModule:RestartPathing()
@@ -396,7 +386,6 @@ function PathfindingModule:StartHoverTargeting()
 
 				if (now - self.LastDebugPrint) > 0.5 then
 					self.LastDebugPrint = now
-					local enemyTypeStr = isBoss and "BOSS" or "NORMAL ENEMY"
 					print(string.format("[%s ACTIVE] DistToLock: %.2f | Unfocused: %s | EffectiveSpeed: %.1f | Anchored: %s",
 						isBoss and "BOSS MODE" or "POST",
 						distToLock,
@@ -406,10 +395,9 @@ function PathfindingModule:StartHoverTargeting()
 					))
 				end
 
-				-- Anti-drift pull-back: Keep collisions off while pulling back
+				-- Anti-drift pull-back
 				if distToLock > maxDriftDist then
 					self.IsAtPost = false
-					self:SetCharacterCollisions(false)
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
@@ -424,7 +412,7 @@ function PathfindingModule:StartHoverTargeting()
 					return
 				end
 
-				-- Snap, Anchor & Restore Collisions at Post
+				-- Snap & Anchor at Post Position
 				if distToLock <= arrivalDist then
 					root.AssemblyLinearVelocity = Vector3.zero
 					self.IsAtPost = true
@@ -440,12 +428,10 @@ function PathfindingModule:StartHoverTargeting()
 					if not root.Anchored then
 						root.Anchored = true
 						self.IsAnchoredAtPost = true
-						self:SetCharacterCollisions(true) -- Restore normal collision when locked
 						print(string.format("[DEBUG] ANCHORED AT POST SPOT -> %s (EnemyType: %s)", tostring(root.Position), isBoss and "BOSS" or "NORMAL"))
 					end
 				else
 					self.IsAtPost = false
-					self:SetCharacterCollisions(false)
 					if root.Anchored then
 						root.Anchored = false
 						self.IsAnchoredAtPost = false
@@ -460,9 +446,8 @@ function PathfindingModule:StartHoverTargeting()
 				return
 			end
 
-			-- Pathing / Target approach (Keep collisions disabled during traversal)
+			-- Target approach with obstacle/terrain pathing
 			self.IsAtPost = false
-			self:SetCharacterCollisions(false)
 			local flatDelta = Vector3.new(enemyPos.X - currentPos.X, 0, enemyPos.Z - currentPos.Z)
 			if flatDelta.Magnitude > self.ENGAGE_DISTANCE then
 				local wishDir = self:GetGroundWishDir(root, enemyPos)
@@ -492,7 +477,6 @@ function PathfindingModule:StartHoverTargeting()
 			self.LockPosition = nil
 			self.IsAtPost = false
 			self.MoveState.waypoints = nil
-			self:SetCharacterCollisions(true) -- Restore normal collisions when no targets exist
 			if root.Anchored then
 				root.Anchored = false
 				self.IsAnchoredAtPost = false
@@ -517,8 +501,6 @@ function PathfindingModule:StopPathfinding()
 		self.MoveConnection:Disconnect()
 		self.MoveConnection = nil
 	end
-
-	self:SetCharacterCollisions(true) -- Restore collisions on cleanup
 
 	local char = self.Player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
