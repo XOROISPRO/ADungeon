@@ -8,7 +8,7 @@ local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
 
-print("Version 3.0 - Auto-Path Recalculation on Stuck Detection")
+print("Version 3.1 - Wall Raycast Fix, Alt-Tab Frame Cap & Auto-Recalculate")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
@@ -313,7 +313,10 @@ function PathfindingModule:HasLineOfSight(origin: Vector3, targetPos: Vector3): 
 	local char = self.Player.Character
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	rayParams.FilterDescendantsInstances = {char, Workspace:FindFirstChild("dungeon")}
+	
+	-- Only exclude local character model so map walls correctly block LOS
+	rayParams.FilterDescendantsInstances = { char }
+	rayParams.IgnoreWater = true
 
 	local rayDirection = targetPos - origin
 	local result = Workspace:Raycast(origin, rayDirection, rayParams)
@@ -394,8 +397,11 @@ function PathfindingModule:StartHoverTargeting()
 	self.StuckTimer = 0
 	print("[DEBUG] Started Targeting")
 
-	self.MoveConnection = RunService.Heartbeat:Connect(function(dt)
+	self.MoveConnection = RunService.Heartbeat:Connect(function(rawDt)
 		if not self.State.Navigating or not root or not char then return end
+
+		-- Cap delta time to prevent physics math spikes during frame drops or Alt-Tab
+		local dt = math.min(rawDt, 0.033)
 
 		local currentSpeed = root.AssemblyLinearVelocity.Magnitude
 		if currentSpeed > self.SPEED_ANOMALY_THRESHOLD then
@@ -404,7 +410,7 @@ function PathfindingModule:StartHoverTargeting()
 			return
 		end
 
-		-- Check if stuck on ground obstacles and recalculate pathing
+		-- Run Auto-Pathing Recalculation Check if physically stuck
 		self:CheckStuckAndRecalculate(root, dt)
 
 		local enemyRoot, isBoss = self:GetClosestEnemy()
@@ -413,9 +419,8 @@ function PathfindingModule:StartHoverTargeting()
 			local enemyPos = enemyRoot.Position
 			local now = os.clock()
 
-			local focusScalar = self.IsUnfocused and 1.15 or 1.0
-			local maxDriftDist = (isBoss and self.MAX_DRIFT_DISTANCE_BOSS or self.MAX_DRIFT_DISTANCE_NORMAL) * focusScalar
-			local arrivalDist = (isBoss and self.ARRIVAL_DISTANCE_BOSS or self.ARRIVAL_DISTANCE_NORMAL) * focusScalar
+			local maxDriftDist = isBoss and self.MAX_DRIFT_DISTANCE_BOSS or self.MAX_DRIFT_DISTANCE_NORMAL
+			local arrivalDist = isBoss and self.ARRIVAL_DISTANCE_BOSS or self.ARRIVAL_DISTANCE_NORMAL
 			local effectiveSpeed = self:GetEffectiveSpeed()
 
 			if self.LockPosition then
@@ -465,7 +470,7 @@ function PathfindingModule:StartHoverTargeting()
 						targetCFrame = CFrame.new(self.LockPosition) * CFrame.Angles(-math.rad(90), 0, 0)
 					end
 
-					root.CFrame = root.CFrame:Lerp(targetCFrame, math.clamp(dt * self.LERP_SPEED, 0.05, 1))
+					root.CFrame = root.CFrame:Lerp(targetCFrame, math.clamp(dt * self.LERP_SPEED, 0.01, 0.25))
 					root.AssemblyLinearVelocity = root.AssemblyLinearVelocity * 0.5
 
 					if distToLock <= 0.1 then
