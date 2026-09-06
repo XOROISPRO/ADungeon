@@ -8,7 +8,7 @@ local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
 
-print("Version 2.6 - Ground Pathfinding & Wall Avoidance")
+print("Version 2.7 - Smooth CFrame Lerp & Anti-Rubberband")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
@@ -269,7 +269,6 @@ local function faceDownward(root: BasePart)
 	root.CFrame = CFrame.new(currentPos) * CFrame.Angles(-math.rad(90), 0, 0)
 end
 
--- Checks whether direct straight path is obstructed by a wall
 function PathfindingModule:HasLineOfSight(origin: Vector3, targetPos: Vector3): boolean
 	local char = self.Player.Character
 	local rayParams = RaycastParams.new()
@@ -281,24 +280,21 @@ function PathfindingModule:HasLineOfSight(origin: Vector3, targetPos: Vector3): 
 	return result == nil
 end
 
--- Improved ground pathing with obstacle awareness & waypoint tracking
 function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3): Vector3
 	local state = self.MoveState
 	local currentTime = os.clock()
 	local rootPos = root.Position
 
-	-- Direct line of sight optimization (short paths without pathfinding overhead)
 	if self:HasLineOfSight(rootPos, targetPos) then
 		state.waypoints = nil
 		local directDelta = Vector3.new(targetPos.X - rootPos.X, 0, targetPos.Z - rootPos.Z)
 		return directDelta.Magnitude > 0.1 and directDelta.Unit or Vector3.zero
 	end
 
-	-- Calculate path if no waypoints or state is stale
 	if not state.waypoints or (currentTime - state.lastComputeTime) > 0.35 then
 		state.lastComputeTime = currentTime
 		local path = PathfindingService:CreatePath({
-			AgentRadius = 3.0,     -- Margins away from walls
+			AgentRadius = 3.0,
 			AgentHeight = 5.0,
 			AgentCanJump = true,
 			AgentCanClimb = false,
@@ -310,13 +306,12 @@ function PathfindingModule:GetGroundWishDir(root: BasePart, targetPos: Vector3):
 
 		if ok and path.Status == Enum.PathStatus.Success then
 			state.waypoints = path:GetWaypoints()
-			state.waypointIndex = 2 -- Skip starting node
+			state.waypointIndex = 2
 		else
 			state.waypoints = nil
 		end
 	end
 
-	-- Advance through waypoints
 	if state.waypoints and state.waypointIndex <= #state.waypoints then
 		local currentWP = state.waypoints[state.waypointIndex]
 		local wpPos = currentWP.Position
@@ -412,23 +407,31 @@ function PathfindingModule:StartHoverTargeting()
 					return
 				end
 
-				-- Snap & Anchor at Post Position
+				-- Smooth Interpolated Arrival (Replaces instant CFrame hard-snapping)
 				if distToLock <= arrivalDist then
-					root.AssemblyLinearVelocity = Vector3.zero
 					self.IsAtPost = true
 
+					-- Calculate target end orientation
+					local targetCFrame
 					if isBoss then
 						local currentRotation = root.CFrame - root.CFrame.Position
-						root.CFrame = CFrame.new(self.LockPosition.X, currentPos.Y, self.LockPosition.Z) * currentRotation
+						targetCFrame = CFrame.new(self.LockPosition.X, currentPos.Y, self.LockPosition.Z) * currentRotation
 					else
-						faceDownward(root)
-						root.CFrame = CFrame.new(self.LockPosition) * CFrame.Angles(-math.rad(90), 0, 0)
+						targetCFrame = CFrame.new(self.LockPosition) * CFrame.Angles(-math.rad(90), 0, 0)
 					end
 
-					if not root.Anchored then
-						root.Anchored = true
-						self.IsAnchoredAtPost = true
-						print(string.format("[DEBUG] ANCHORED AT POST SPOT -> %s (EnemyType: %s)", tostring(root.Position), isBoss and "BOSS" or "NORMAL"))
+					-- Smoothly transition position using Lerp over time instead of teleporting
+					root.CFrame = root.CFrame:Lerp(targetCFrame, math.clamp(dt * 15, 0.1, 1))
+					root.AssemblyLinearVelocity = root.AssemblyLinearVelocity * 0.5 -- Gradual velocity dampen
+
+					-- Anchor only when virtually touching post spot (< 0.1 studs away)
+					if distToLock <= 0.1 then
+						root.AssemblyLinearVelocity = Vector3.zero
+						if not root.Anchored then
+							root.Anchored = true
+							self.IsAnchoredAtPost = true
+							print(string.format("[DEBUG] SMOOTHLY ANCHORED AT POST SPOT -> %s (EnemyType: %s)", tostring(root.Position), isBoss and "BOSS" or "NORMAL"))
+						end
 					end
 				else
 					self.IsAtPost = false
