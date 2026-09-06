@@ -8,7 +8,7 @@ local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
 
-print("Version 2.85 - Capped Ascent Speed & Anti-Rubberband")
+print("Version 2.875 - Capped Ascent Speed & Anti-Rubberband")
 
 function PathfindingModule.Init(State: any, Toggles: any)
 	local self = setmetatable({}, PathfindingModule)
@@ -24,10 +24,10 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.OFFSET_DISTANCE = 3
 	self.POST_MODE = true
 	self.BOSS_MODE = false
-	self.LERP_SPEED = 5
+	self.LERP_SPEED = 2
 
 	-- NEW: Controlled vertical speed (Lower = Smoother/Slower rise to prevent anti-cheat triggers)
-	self.ASCENT_SPEED = 10 
+	self.ASCENT_SPEED = 7 
 
 	-- Drift & Arrival Thresholds
 	self.MAX_DRIFT_DISTANCE_NORMAL = 5.0
