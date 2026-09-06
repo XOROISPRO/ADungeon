@@ -24,7 +24,7 @@ function PathfindingModule.Init(State: any, Toggles: any)
 	self.OFFSET_DISTANCE = 3
 	self.POST_MODE = true
 	self.BOSS_MODE = false
-
+	self.LERP_SPEED = 9
 	-- Drift & Arrival Thresholds
 	self.MAX_DRIFT_DISTANCE_NORMAL = 5.0
 	self.MAX_DRIFT_DISTANCE_BOSS = 3
@@ -421,7 +421,7 @@ function PathfindingModule:StartHoverTargeting()
 					end
 
 					-- Smoothly transition position using Lerp over time instead of teleporting
-					root.CFrame = root.CFrame:Lerp(targetCFrame, math.clamp(dt * 15, 0.1, 1))
+					root.CFrame = root.CFrame:Lerp(targetCFrame, math.clamp(dt * self.LERP_SPEED, 0.1, 1))
 					root.AssemblyLinearVelocity = root.AssemblyLinearVelocity * 0.5 -- Gradual velocity dampen
 
 					-- Anchor only when virtually touching post spot (< 0.1 studs away)
